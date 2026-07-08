@@ -2,7 +2,7 @@
 // @name         JH_Weatherinfo
 // @namespace    MGWeatherHUD
 // @version      1.1.1
-// @description  Arie's Mod 기반 날씨 예보 HUD - 설정 버튼 정리 버전
+// @description  Arie's Mod 기반 날씨 예보 HUD
 // @author       JunHwan, ChatGPT
 // @match        https://magicgarden.gg/r/*
 // @match        https://magiccircle.gg/r/*
