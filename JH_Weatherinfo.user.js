@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JH_Weatherinfo
 // @namespace    MGWeatherHUD
-// @version      1.1.1
-// @description  Arie's Mod 기반 날씨 예보 HUD
+// @version      1.1.2
+// @description  Arie's Mod 기반 날씨 예보 HUD - 접기 순서 변경, 현재 날씨 남은 시간 표시
 // @author       JunHwan, ChatGPT
 // @match        https://magicgarden.gg/r/*
 // @match        https://magiccircle.gg/r/*
@@ -50,24 +50,39 @@
 
   function normalizeCollapseMode(value) {
     const n = Number(value);
-    if (n === COLLAPSE_FULL || n === COLLAPSE_SUMMARY || n === COLLAPSE_HEADER) return n;
+
+    if (
+      n === COLLAPSE_FULL ||
+      n === COLLAPSE_SUMMARY ||
+      n === COLLAPSE_HEADER
+    ) {
+      return n;
+    }
+
+    return COLLAPSE_FULL;
+  }
+
+  function nextCollapseMode() {
+    if (settings.collapseMode === COLLAPSE_FULL) return COLLAPSE_HEADER;
+    if (settings.collapseMode === COLLAPSE_HEADER) return COLLAPSE_SUMMARY;
     return COLLAPSE_FULL;
   }
 
   function collapseButtonIcon() {
     if (settings.collapseMode === COLLAPSE_FULL) return "▤";
-    if (settings.collapseMode === COLLAPSE_SUMMARY) return "▁";
-    return "▣";
+    if (settings.collapseMode === COLLAPSE_HEADER) return "▣";
+    return "▁";
   }
 
   function collapseButtonTitle() {
-    if (settings.collapseMode === COLLAPSE_FULL) return "요약 보기";
-    if (settings.collapseMode === COLLAPSE_SUMMARY) return "완전히 접기";
+    if (settings.collapseMode === COLLAPSE_FULL) return "완전히 접기";
+    if (settings.collapseMode === COLLAPSE_HEADER) return "요약 보기";
     return "전체 펼치기";
   }
 
   function applySettingsOnlyClass(box) {
     if (!box) return;
+
     box.classList.toggle(
       "settings-only",
       settings.collapseMode === COLLAPSE_HEADER && settings.settingsOpen
@@ -77,8 +92,15 @@
   function applyCollapseClass(box) {
     if (!box) return;
 
-    box.classList.toggle("collapse-summary", settings.collapseMode === COLLAPSE_SUMMARY);
-    box.classList.toggle("collapse-header", settings.collapseMode === COLLAPSE_HEADER);
+    box.classList.toggle(
+      "collapse-summary",
+      settings.collapseMode === COLLAPSE_SUMMARY
+    );
+
+    box.classList.toggle(
+      "collapse-header",
+      settings.collapseMode === COLLAPSE_HEADER
+    );
 
     applySettingsOnlyClass(box);
   }
@@ -129,7 +151,9 @@
     }
 
     function stableStringify(value) {
-      if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+      if (Array.isArray(value)) {
+        return `[${value.map(stableStringify).join(",")}]`;
+      }
 
       if (value && typeof value === "object") {
         return `{${Object.keys(value)
@@ -176,38 +200,62 @@
         hydro: {
           durationMinutes: Math.max(
             5,
-            toFiniteNumber(hydro.durationMinutes, DEFAULT_FORECAST_CONFIG.hydro.durationMinutes)
+            toFiniteNumber(
+              hydro.durationMinutes,
+              DEFAULT_FORECAST_CONFIG.hydro.durationMinutes
+            )
           ),
           minFrequencyMinutes: Math.max(
             5,
-            toFiniteNumber(hydro.minFrequencyMinutes, DEFAULT_FORECAST_CONFIG.hydro.minFrequencyMinutes)
+            toFiniteNumber(
+              hydro.minFrequencyMinutes,
+              DEFAULT_FORECAST_CONFIG.hydro.minFrequencyMinutes
+            )
           ),
           maxFrequencyMinutes: Math.max(
             5,
-            toFiniteNumber(hydro.maxFrequencyMinutes, DEFAULT_FORECAST_CONFIG.hydro.maxFrequencyMinutes)
+            toFiniteNumber(
+              hydro.maxFrequencyMinutes,
+              DEFAULT_FORECAST_CONFIG.hydro.maxFrequencyMinutes
+            )
           ),
-          dropTable: normalizeDropTable(hydro.dropTable, DEFAULT_FORECAST_CONFIG.hydro.dropTable),
+          dropTable: normalizeDropTable(
+            hydro.dropTable,
+            DEFAULT_FORECAST_CONFIG.hydro.dropTable
+          ),
         },
         lunar: {
           durationMinutes: Math.max(
             5,
-            toFiniteNumber(lunar.durationMinutes, DEFAULT_FORECAST_CONFIG.lunar.durationMinutes)
+            toFiniteNumber(
+              lunar.durationMinutes,
+              DEFAULT_FORECAST_CONFIG.lunar.durationMinutes
+            )
           ),
           fixedTimeSlots: Array.isArray(lunar.fixedTimeSlots)
             ? lunar.fixedTimeSlots
                 .map((v) => Math.round(Number(v)))
                 .filter((v) => Number.isFinite(v) && v >= 0 && v < SLOTS_PER_DAY)
             : cloneConfig(DEFAULT_FORECAST_CONFIG.lunar.fixedTimeSlots),
-          dropTable: normalizeDropTable(lunar.dropTable, DEFAULT_FORECAST_CONFIG.lunar.dropTable),
+          dropTable: normalizeDropTable(
+            lunar.dropTable,
+            DEFAULT_FORECAST_CONFIG.lunar.dropTable
+          ),
         },
       };
 
-      if (normalized.hydro.maxFrequencyMinutes < normalized.hydro.minFrequencyMinutes) {
-        normalized.hydro.maxFrequencyMinutes = normalized.hydro.minFrequencyMinutes;
+      if (
+        normalized.hydro.maxFrequencyMinutes <
+        normalized.hydro.minFrequencyMinutes
+      ) {
+        normalized.hydro.maxFrequencyMinutes =
+          normalized.hydro.minFrequencyMinutes;
       }
 
       if (!normalized.lunar.fixedTimeSlots.length) {
-        normalized.lunar.fixedTimeSlots = cloneConfig(DEFAULT_FORECAST_CONFIG.lunar.fixedTimeSlots);
+        normalized.lunar.fixedTimeSlots = cloneConfig(
+          DEFAULT_FORECAST_CONFIG.lunar.fixedTimeSlots
+        );
       }
 
       return normalized;
@@ -221,7 +269,9 @@
       forecastConfigLoadedAt = Date.now();
       forecastConfigError = "";
 
-      if (signature === forecastConfigSignature) return false;
+      if (signature === forecastConfigSignature) {
+        return false;
+      }
 
       forecastConfig = normalized;
       forecastConfigSignature = signature;
@@ -235,7 +285,8 @@
         const gm =
           typeof GM_xmlhttpRequest === "function"
             ? GM_xmlhttpRequest
-            : typeof GM !== "undefined" && typeof GM.xmlHttpRequest === "function"
+            : typeof GM !== "undefined" &&
+                typeof GM.xmlHttpRequest === "function"
               ? GM.xmlHttpRequest
               : null;
 
@@ -268,7 +319,11 @@
     }
 
     function extractBalancedObjectLiteral(source, constName) {
-      const marker = new RegExp(`\\b(?:const|let|var)\\s+${constName}\\s*=\\s*\\{`, "m");
+      const marker = new RegExp(
+        `\\b(?:const|let|var)\\s+${constName}\\s*=\\s*\\{`,
+        "m"
+      );
+
       const match = marker.exec(source);
       if (!match) return null;
 
@@ -281,9 +336,14 @@
         const ch = source[i];
 
         if (quote) {
-          if (escaped) escaped = false;
-          else if (ch === "\\") escaped = true;
-          else if (ch === quote) quote = "";
+          if (escaped) {
+            escaped = false;
+          } else if (ch === "\\") {
+            escaped = true;
+          } else if (ch === quote) {
+            quote = "";
+          }
+
           continue;
         }
 
@@ -296,7 +356,10 @@
 
         if (ch === "}") {
           depth--;
-          if (depth === 0) return source.slice(start, i + 1);
+
+          if (depth === 0) {
+            return source.slice(start, i + 1);
+          }
         }
       }
 
@@ -312,6 +375,7 @@
     function parseNumberArrayProperty(objectText, name) {
       const re = new RegExp(`\\b${name}\\s*:\\s*\\[([^\\]]*)\\]`, "m");
       const match = re.exec(objectText);
+
       if (!match) return undefined;
 
       return match[1]
@@ -341,7 +405,9 @@
       const hydroText = extractBalancedObjectLiteral(sourceText, "HYDRO");
       const lunarText = extractBalancedObjectLiteral(sourceText, "LUNAR");
 
-      if (!hydroText && !lunarText) throw new Error("HYDRO/LUNAR block not found");
+      if (!hydroText && !lunarText) {
+        throw new Error("HYDRO/LUNAR block not found");
+      }
 
       const candidate = {
         hydro: {},
@@ -349,15 +415,30 @@
       };
 
       if (hydroText) {
-        candidate.hydro.durationMinutes = parseNumberProperty(hydroText, "durationMinutes");
-        candidate.hydro.minFrequencyMinutes = parseNumberProperty(hydroText, "minFrequencyMinutes");
-        candidate.hydro.maxFrequencyMinutes = parseNumberProperty(hydroText, "maxFrequencyMinutes");
+        candidate.hydro.durationMinutes = parseNumberProperty(
+          hydroText,
+          "durationMinutes"
+        );
+        candidate.hydro.minFrequencyMinutes = parseNumberProperty(
+          hydroText,
+          "minFrequencyMinutes"
+        );
+        candidate.hydro.maxFrequencyMinutes = parseNumberProperty(
+          hydroText,
+          "maxFrequencyMinutes"
+        );
         candidate.hydro.dropTable = parseDropTable(hydroText);
       }
 
       if (lunarText) {
-        candidate.lunar.durationMinutes = parseNumberProperty(lunarText, "durationMinutes");
-        candidate.lunar.fixedTimeSlots = parseNumberArrayProperty(lunarText, "fixedTimeSlots");
+        candidate.lunar.durationMinutes = parseNumberProperty(
+          lunarText,
+          "durationMinutes"
+        );
+        candidate.lunar.fixedTimeSlots = parseNumberArrayProperty(
+          lunarText,
+          "fixedTimeSlots"
+        );
         candidate.lunar.dropTable = parseDropTable(lunarText);
       }
 
@@ -373,10 +454,10 @@
           const parsed = parseForecastConfigFromSource(text);
           const changed = applyForecastConfig(parsed, `Arie's Mod source: ${url}`);
 
-          console.log("[MG Weather HUD] forecast config loaded.", {
-            changed,
-            state: getConfigState(),
-          });
+          console.log(
+            `[MG Weather HUD] forecast config loaded. changed=${changed}`,
+            getConfigState()
+          );
 
           return true;
         } catch (err) {
@@ -446,14 +527,20 @@
     }
 
     function pickWeighted(dropTable, rng) {
-      const total = dropTable.reduce((sum, row) => sum + Number(row.weight || 0), 0);
+      const total = dropTable.reduce(
+        (sum, row) => sum + Number(row.weight || 0),
+        0
+      );
 
-      if (!(total > 0)) return dropTable.length ? dropTable[0].weatherId : null;
+      if (!(total > 0)) {
+        return dropTable.length ? dropTable[0].weatherId : null;
+      }
 
       let roll = rng() * total;
 
       for (const row of dropTable) {
         roll -= Number(row.weight || 0);
+
         if (roll <= 0) return row.weatherId;
       }
 
@@ -471,7 +558,11 @@
 
     function slotIndex(ms) {
       const dayStart = startOfUtcDayMs(ms);
-      return Math.max(0, Math.min(SLOTS_PER_DAY - 1, Math.floor((ms - dayStart) / SLOT_MS)));
+
+      return Math.max(
+        0,
+        Math.min(SLOTS_PER_DAY - 1, Math.floor((ms - dayStart) / SLOT_MS))
+      );
     }
 
     function durationSlots(group) {
@@ -516,7 +607,10 @@
       }
 
       const minSlots = Math.max(1, Math.floor(HYDRO.minFrequencyMinutes / 5));
-      const maxSlots = Math.max(minSlots, Math.floor(HYDRO.maxFrequencyMinutes / 5));
+      const maxSlots = Math.max(
+        minSlots,
+        Math.floor(HYDRO.maxFrequencyMinutes / 5)
+      );
       const hydroDuration = durationSlots(HYDRO);
 
       let slot = Math.floor(rng() * minSlots);
@@ -527,7 +621,9 @@
         let canPlace = !!weatherId && slot + hydroDuration <= SLOTS_PER_DAY;
 
         for (let i = 0; canPlace && i < hydroDuration; i++) {
-          if (reserved.has(slot + i)) canPlace = false;
+          if (reserved.has(slot + i)) {
+            canPlace = false;
+          }
         }
 
         if (canPlace) {
@@ -536,11 +632,15 @@
           }
         }
 
-        slot += Math.max(1, minSlots + Math.floor((maxSlots - minSlots) * rng()));
+        slot += Math.max(
+          1,
+          minSlots + Math.floor((maxSlots - minSlots) * rng())
+        );
       }
 
       for (const fixedSlot of LUNAR.fixedTimeSlots) {
         const weatherId = pickWeighted(LUNAR.dropTable, rng);
+
         if (!weatherId) continue;
 
         for (let i = 0; i < lunarDuration; i++) {
@@ -549,6 +649,16 @@
       }
 
       return result;
+    }
+
+    function firstContiguousSlot(schedule, slot, weatherId) {
+      let start = slot;
+
+      while (start > 0 && schedule[start - 1] === weatherId) {
+        start--;
+      }
+
+      return start;
     }
 
     function lastContiguousSlot(schedule, slot, weatherId) {
@@ -563,6 +673,33 @@
 
     function isLunar(weatherId) {
       return weatherId === "Dawn" || weatherId === "AmberMoon";
+    }
+
+    function findCurrent(nowMs) {
+      const dayStart = startOfUtcDayMs(nowMs);
+      const dayKey = dayKeyFromMs(nowMs);
+      const schedule = scheduleForDay(dayKey);
+      const curSlot = slotIndex(nowMs);
+      const curWeather = schedule[curSlot] || null;
+
+      if (curWeather) {
+        const start = firstContiguousSlot(schedule, curSlot, curWeather);
+        const end = lastContiguousSlot(schedule, curSlot, curWeather);
+
+        return {
+          weatherId: curWeather,
+          startsAtMs: dayStart + start * SLOT_MS,
+          endsAtMs: dayStart + (end + 1) * SLOT_MS,
+        };
+      }
+
+      const next = findNext(nowMs, () => true);
+
+      return {
+        weatherId: null,
+        startsAtMs: null,
+        endsAtMs: next ? next.startsAtMs : null,
+      };
     }
 
     function findNext(nowMs, predicate) {
@@ -585,6 +722,7 @@
 
         for (let slot = start; slot < SLOTS_PER_DAY; slot++) {
           const weatherId = schedule[slot];
+
           if (!weatherId || !predicate(weatherId)) continue;
 
           const end = lastContiguousSlot(schedule, slot, weatherId);
@@ -644,7 +782,9 @@
       return {
         source: forecastConfigSource,
         loadedAt: forecastConfigLoadedAt,
-        loadedAtText: forecastConfigLoadedAt ? new Date(forecastConfigLoadedAt).toString() : "",
+        loadedAtText: forecastConfigLoadedAt
+          ? new Date(forecastConfigLoadedAt).toString()
+          : "",
         error: forecastConfigError,
         config: cloneConfig(forecastConfig),
       };
@@ -667,6 +807,10 @@
     }, 30 * 60 * 1000);
 
     return {
+      currentEvent(nowMs = Date.now()) {
+        return findCurrent(nowMs);
+      },
+
       nextEvent(nowMs = Date.now()) {
         return findNext(nowMs, () => true);
       },
@@ -688,7 +832,9 @@
       formatRemaining,
       refreshConfig: refreshForecastConfigFromAriesMod,
       getConfigState,
-      __source: "embedded Arie's Mod forecast engine with dynamic HYDRO/LUNAR weights",
+
+      __source:
+        "embedded Arie's Mod forecast engine with dynamic HYDRO/LUNAR weights",
     };
   })();
 
@@ -736,10 +882,14 @@
             : defaults.collapseMode;
 
       merged.settingsOpen =
-        saved.settingsOpen !== undefined ? !!saved.settingsOpen : defaults.settingsOpen;
+        saved.settingsOpen !== undefined
+          ? !!saved.settingsOpen
+          : defaults.settingsOpen;
 
       merged.showDataLine =
-        saved.showDataLine !== undefined ? !!saved.showDataLine : defaults.showDataLine;
+        saved.showDataLine !== undefined
+          ? !!saved.showDataLine
+          : defaults.showDataLine;
 
       merged.showServerTimeLine =
         saved.showServerTimeLine !== undefined
@@ -764,7 +914,10 @@
         ? Number(saved.timeOffsetSec)
         : defaults.timeOffsetSec;
 
-      merged.left = Number.isFinite(Number(saved.left)) ? Number(saved.left) : null;
+      merged.left = Number.isFinite(Number(saved.left))
+        ? Number(saved.left)
+        : null;
+
       merged.top = Number.isFinite(Number(saved.top)) ? Number(saved.top) : null;
 
       return merged;
@@ -794,8 +947,12 @@
           DEFAULT_LUNAR_LIST_COUNT
         ),
         timeOffsetSec: Number(settings.timeOffsetSec) || 0,
-        left: Number.isFinite(Number(settings.left)) ? Math.round(settings.left) : null,
-        top: Number.isFinite(Number(settings.top)) ? Math.round(settings.top) : null,
+        left: Number.isFinite(Number(settings.left))
+          ? Math.round(settings.left)
+          : null,
+        top: Number.isFinite(Number(settings.top))
+          ? Math.round(settings.top)
+          : null,
       })
     );
   }
@@ -822,6 +979,7 @@
     }
 
     const s = String(value).trim();
+
     if (!s) return null;
 
     if (
@@ -835,15 +993,26 @@
 
     if (/^rain$/i.test(s) || s === "비") return "Rain";
 
-    if (/^frost$/i.test(s) || /^snow$/i.test(s) || s === "눈" || s === "서리") {
+    if (
+      /^frost$/i.test(s) ||
+      /^snow$/i.test(s) ||
+      s === "눈" ||
+      s === "서리"
+    ) {
       return "Frost";
     }
 
-    if (/^thunder\s*storm$/i.test(s) || /^thunderstorm$/i.test(s) || s === "뇌우") {
+    if (
+      /^thunder\s*storm$/i.test(s) ||
+      /^thunderstorm$/i.test(s) ||
+      s === "뇌우"
+    ) {
       return "Thunderstorm";
     }
 
-    if (/^dawn$/i.test(s) || s === "던" || s === "달" || s === "새벽") return "Dawn";
+    if (/^dawn$/i.test(s) || s === "던" || s === "달" || s === "새벽") {
+      return "Dawn";
+    }
 
     if (
       /^amber\s*moon$/i.test(s) ||
@@ -890,7 +1059,9 @@
 
   function getGameNowMs() {
     if (serverCurrentTimeMs && serverCurrentTimeReceivedAtClient) {
-      return serverCurrentTimeMs + (Date.now() - serverCurrentTimeReceivedAtClient);
+      return (
+        serverCurrentTimeMs + (Date.now() - serverCurrentTimeReceivedAtClient)
+      );
     }
 
     return Date.now();
@@ -902,6 +1073,17 @@
 
   function getEffectiveNowMs() {
     return getCorrectedGameNowMs();
+  }
+
+  function getCurrentWeatherRemainingMs() {
+    const now = getEffectiveNowMs();
+    const current = QWS_NEXT_WEATHER_FORECAST.currentEvent(now);
+
+    if (!current || !Number.isFinite(Number(current.endsAtMs))) {
+      return null;
+    }
+
+    return Math.max(0, current.endsAtMs - now);
   }
 
   function processFullState(fullState) {
@@ -1056,6 +1238,7 @@
     if (id === "Thunderstorm") return "mg-nw-thunderstorm";
     if (id === "Dawn") return "mg-nw-dawn";
     if (id === "AmberMoon") return "mg-nw-amber";
+
     return "";
   }
 
@@ -1099,7 +1282,10 @@
   }
 
   function getNextLunarList(count) {
-    return QWS_NEXT_WEATHER_FORECAST.nextLunarEventList(getEffectiveNowMs(), count)
+    return QWS_NEXT_WEATHER_FORECAST.nextLunarEventList(
+      getEffectiveNowMs(),
+      count
+    )
       .map(normalizeEvent)
       .filter(Boolean);
   }
@@ -1108,8 +1294,14 @@
     const width = box.offsetWidth || 340;
     const height = box.offsetHeight || 220;
 
-    const maxLeft = Math.max(DEFAULT_MARGIN, window.innerWidth - width - DEFAULT_MARGIN);
-    const maxTop = Math.max(DEFAULT_MARGIN, window.innerHeight - height - DEFAULT_MARGIN);
+    const maxLeft = Math.max(
+      DEFAULT_MARGIN,
+      window.innerWidth - width - DEFAULT_MARGIN
+    );
+    const maxTop = Math.max(
+      DEFAULT_MARGIN,
+      window.innerHeight - height - DEFAULT_MARGIN
+    );
 
     const defaultLeft = maxLeft;
     const defaultTop = DEFAULT_MARGIN;
@@ -1526,7 +1718,7 @@
       toggleBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
 
-        settings.collapseMode = normalizeCollapseMode(settings.collapseMode + 1);
+        settings.collapseMode = nextCollapseMode();
         settings.settingsOpen = false;
 
         box.classList.remove("settings-open", "settings-only");
@@ -1633,7 +1825,9 @@
     function begin(ev) {
       const target = ev.target;
 
-      if (target && target.closest && target.closest("button,input,label")) return;
+      if (target && target.closest && target.closest("button,input,label")) {
+        return;
+      }
 
       dragging = true;
 
@@ -1730,15 +1924,26 @@
     const nextLunar = lunarEvents[0] || null;
 
     if (currentEl) {
+      const remainingMs = getCurrentWeatherRemainingMs();
+      const remainingHtml =
+        remainingMs === null
+          ? ""
+          : ` <span class="mg-nw-in">in ${escapeHtml(formatRemaining(remainingMs))}</span>`;
+
       if (gameWeatherId === undefined) {
         currentEl.textContent = "읽는 중...";
         currentEl.className = "mg-nw-value";
       } else if (gameWeatherId === null) {
-        currentEl.textContent = QWS_NEXT_WEATHER_FORECAST.currentName(null);
+        currentEl.innerHTML =
+          `<span>${escapeHtml(QWS_NEXT_WEATHER_FORECAST.currentName(null))}</span>` +
+          remainingHtml;
         currentEl.className = "mg-nw-value";
       } else {
-        currentEl.textContent = QWS_NEXT_WEATHER_FORECAST.currentName(gameWeatherId);
-        currentEl.className = `mg-nw-value ${weatherClass(gameWeatherId)}`;
+        currentEl.innerHTML =
+          `<span class="${weatherClass(gameWeatherId)}">${escapeHtml(
+            QWS_NEXT_WEATHER_FORECAST.currentName(gameWeatherId)
+          )}</span>` + remainingHtml;
+        currentEl.className = "mg-nw-value";
       }
     }
 
@@ -1791,7 +1996,10 @@
     }
 
     if (lunarListEl) {
-      lunarListEl.innerHTML = renderEventRows(lunarEvents, "희귀 날씨 예보 없음");
+      lunarListEl.innerHTML = renderEventRows(
+        lunarEvents,
+        "희귀 날씨 예보 없음"
+      );
     }
   }
 
@@ -1917,6 +2125,9 @@
         gameWeatherSource,
         gameWeatherUpdatedAtClient,
 
+        currentScheduledEvent: QWS_NEXT_WEATHER_FORECAST.currentEvent(now),
+        currentRemainingMs: getCurrentWeatherRemainingMs(),
+
         serverCurrentTimeMs,
         serverCurrentTimeReceivedAtClient,
 
@@ -1927,8 +2138,12 @@
         nextNormalList: getNextNormalList(getNormalListCount()),
         nextLunarList: getNextLunarList(getLunarListCount()),
 
-        firstAnyEvent: normalizeEvent(QWS_NEXT_WEATHER_FORECAST.nextEvent(now)),
-        firstLunarEvent: normalizeEvent(QWS_NEXT_WEATHER_FORECAST.nextLunarEvent(now)),
+        firstAnyEvent: normalizeEvent(
+          QWS_NEXT_WEATHER_FORECAST.nextEvent(now)
+        ),
+        firstLunarEvent: normalizeEvent(
+          QWS_NEXT_WEATHER_FORECAST.nextLunarEvent(now)
+        ),
       };
 
       console.log("[MG Weather HUD] state:", state);
@@ -1966,6 +2181,7 @@
 
     debugNext() {
       const now = getEffectiveNowMs();
+      const current = QWS_NEXT_WEATHER_FORECAST.currentEvent(now);
       const next = QWS_NEXT_WEATHER_FORECAST.nextEvent(now);
       const lunar = QWS_NEXT_WEATHER_FORECAST.nextLunarEvent(now);
 
@@ -1975,17 +2191,27 @@
         timeOffsetSec: Number(settings.timeOffsetSec) || 0,
         normalListCount: getNormalListCount(),
         lunarListCount: getLunarListCount(),
+        current,
+        currentDisplay: current
+          ? `${QWS_NEXT_WEATHER_FORECAST.displayName(
+              current.weatherId
+            )} 남은 ${
+              current.endsAtMs
+                ? formatRemaining(current.endsAtMs - now)
+                : "unknown"
+            }`
+          : null,
         next,
         nextDisplay: next
-          ? `${QWS_NEXT_WEATHER_FORECAST.displayName(next.weatherId)} ${formatRemaining(
-              next.startsAtMs - now
-            )}`
+          ? `${QWS_NEXT_WEATHER_FORECAST.displayName(
+              next.weatherId
+            )} ${formatRemaining(next.startsAtMs - now)}`
           : null,
         lunar,
         lunarDisplay: lunar
-          ? `${QWS_NEXT_WEATHER_FORECAST.displayName(lunar.weatherId)} ${formatRemaining(
-              lunar.startsAtMs - now
-            )}`
+          ? `${QWS_NEXT_WEATHER_FORECAST.displayName(
+              lunar.weatherId
+            )} ${formatRemaining(lunar.startsAtMs - now)}`
           : null,
         forecastConfig: QWS_NEXT_WEATHER_FORECAST.getConfigState(),
       };
@@ -2011,7 +2237,7 @@
       reapplyCurrentHudPosition(box, true);
     });
 
-    console.log("[MG Weather HUD KR v1.1.1] loaded.");
+    console.log("[MG Weather HUD KR v1.1.2] loaded.");
   }
 
   if (document.readyState === "loading") {
