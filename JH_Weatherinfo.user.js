@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JH_Weatherinfo
 // @namespace    MGWeatherHUD
-// @version      1.2.0
+// @version      1.2.1
 // @description  Arie's Mod 기반 날씨 예보 HUD
 // @author       JunHwan, ChatGPT
 // @match        https://magicgarden.gg/r/*
@@ -20,6 +20,7 @@
   "use strict";
 
   const W = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+
   const HUD_ID = "mg-weather-hud-jh";
   const STYLE_ID = `${HUD_ID}-style`;
   const SETTINGS_KEY = "mg_weather_hud_jh";
@@ -31,6 +32,7 @@
   const MIN_COUNT = 1;
   const MAX_COUNT = 20;
   const STALE_MS = 3 * 60 * 1000;
+  const DEFAULT_OPACITY = 90;
 
   const FULL = 0;
   const SUMMARY = 1;
@@ -39,14 +41,20 @@
   let gameWeatherId;
   let gameWeatherSource = "대기 중";
   let gameWeatherUpdatedAt = 0;
+
+  let serverTimeMs = 0;
+  let serverTimeReceivedAt = 0;
+
   let updateTimer = null;
 
   const $ = (id) => document.getElementById(id);
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
   function clampInt(value, min, max, fallback) {
-    const n = Math.round(Number(value));
-    return Number.isFinite(n) ? clamp(n, min, max) : fallback;
+    const number = Math.round(Number(value));
+    return Number.isFinite(number)
+      ? clamp(number, min, max)
+      : fallback;
   }
 
   function escapeHtml(value) {
@@ -58,72 +66,97 @@
       .replace(/'/g, "&#039;");
   }
 
+  function gameNow() {
+    if (serverTimeMs && serverTimeReceivedAt) {
+      return serverTimeMs + (Date.now() - serverTimeReceivedAt);
+    }
+
+    return Date.now();
+  }
+
+  function updateServerTime(value) {
+    const ms = Number(value);
+    if (!Number.isFinite(ms)) return;
+
+    serverTimeMs = ms;
+    serverTimeReceivedAt = Date.now();
+  }
+
   function formatTime(ms) {
-    const d = new Date(ms);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(
-      d.getMinutes()
+    const date = new Date(ms);
+
+    return `${String(date.getHours()).padStart(2, "0")}:${String(
+      date.getMinutes()
     ).padStart(2, "0")}`;
   }
 
   function formatRemaining(ms) {
     const total = Math.max(0, Math.floor(ms / 1000));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
 
-    if (h) return `${h}h ${m}m ${s}s`;
-    if (m) return `${m}m ${s}s`;
-    return `${s}s`;
+    if (hours) return `${hours}h ${minutes}m ${seconds}s`;
+    if (minutes) return `${minutes}m ${seconds}s`;
+
+    return `${seconds}s`;
   }
 
   function formatAge(ms) {
     if (!Number.isFinite(ms)) return "수신 기록 없음";
 
     const total = Math.max(0, Math.floor(ms / 1000));
-    const m = Math.floor(total / 60);
-    const s = total % 60;
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
 
-    return m ? `${m}분 ${s}초 전` : `${s}초 전`;
+    return minutes
+      ? `${minutes}분 ${seconds}초 전`
+      : `${seconds}초 전`;
   }
 
   function dateKey(ms) {
-    const d = new Date(ms);
+    const date = new Date(ms);
 
     return [
-      d.getFullYear(),
-      String(d.getMonth() + 1).padStart(2, "0"),
-      String(d.getDate()).padStart(2, "0"),
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
     ].join("-");
   }
 
-  function formatDateDivider(ms, now = Date.now()) {
-    const d = new Date(ms);
-    const today = new Date(now);
+  function formatDateDivider(ms, now = gameNow()) {
+    const date = new Date(ms);
+    const current = new Date(now);
 
     const targetDay = new Date(
-      d.getFullYear(),
-      d.getMonth(),
-      d.getDate()
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate()
     ).getTime();
 
-    const todayStart = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate()
+    const currentDay = new Date(
+      current.getFullYear(),
+      current.getMonth(),
+      current.getDate()
     ).getTime();
 
-    const diff = Math.round((targetDay - todayStart) / 86400000);
-    const dateText = `${d.getMonth() + 1}월 ${d.getDate()}일`;
+    const difference = Math.round((targetDay - currentDay) / 86400000);
+    const dateText = `${date.getMonth() + 1}월 ${date.getDate()}일`;
 
-    if (diff === 0) return `오늘 · ${dateText}`;
-    if (diff === 1) return `내일 · ${dateText}`;
+    if (difference === 0) return `오늘 · ${dateText}`;
+    if (difference === 1) return `내일 · ${dateText}`;
 
-    return `${dateText} ${["일", "월", "화", "수", "목", "금", "토"][d.getDay()]}요일`;
+    const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+
+    return `${dateText} ${weekdays[date.getDay()]}요일`;
   }
 
   function normalizeCollapse(value) {
-    const n = Number(value);
-    return [FULL, SUMMARY, HEADER].includes(n) ? n : FULL;
+    const number = Number(value);
+
+    return [FULL, SUMMARY, HEADER].includes(number)
+      ? number
+      : FULL;
   }
 
   function readSettingsText() {
@@ -136,6 +169,7 @@
 
       localStorage.setItem(SETTINGS_KEY, old);
       localStorage.removeItem(key);
+
       return old;
     }
 
@@ -147,6 +181,7 @@
       collapseMode: FULL,
       settingsOpen: false,
       showDebug: false,
+      opacity: DEFAULT_OPACITY,
       normalListCount: DEFAULT_NORMAL_COUNT,
       lunarListCount: DEFAULT_LUNAR_COUNT,
       left: null,
@@ -159,24 +194,40 @@
       return {
         collapseMode: normalizeCollapse(saved.collapseMode),
         settingsOpen: !!saved.settingsOpen,
+
         showDebug:
           saved.showDebug !== undefined
             ? !!saved.showDebug
             : !!saved.showDataLine,
+
+        opacity: clampInt(
+          saved.opacity,
+          5,
+          100,
+          DEFAULT_OPACITY
+        ),
+
         normalListCount: clampInt(
           saved.normalListCount,
           MIN_COUNT,
           MAX_COUNT,
           DEFAULT_NORMAL_COUNT
         ),
+
         lunarListCount: clampInt(
           saved.lunarListCount,
           MIN_COUNT,
           MAX_COUNT,
           DEFAULT_LUNAR_COUNT
         ),
-        left: Number.isFinite(Number(saved.left)) ? Number(saved.left) : null,
-        top: Number.isFinite(Number(saved.top)) ? Number(saved.top) : null,
+
+        left: Number.isFinite(Number(saved.left))
+          ? Number(saved.left)
+          : null,
+
+        top: Number.isFinite(Number(saved.top))
+          ? Number(saved.top)
+          : null,
       };
     } catch {
       return defaults;
@@ -192,21 +243,26 @@
         collapseMode: normalizeCollapse(settings.collapseMode),
         settingsOpen: !!settings.settingsOpen,
         showDebug: !!settings.showDebug,
+        opacity: clampInt(settings.opacity, 5, 100, DEFAULT_OPACITY),
+
         normalListCount: clampInt(
           settings.normalListCount,
           MIN_COUNT,
           MAX_COUNT,
           DEFAULT_NORMAL_COUNT
         ),
+
         lunarListCount: clampInt(
           settings.lunarListCount,
           MIN_COUNT,
           MAX_COUNT,
           DEFAULT_LUNAR_COUNT
         ),
+
         left: Number.isFinite(Number(settings.left))
           ? Math.round(settings.left)
           : null,
+
         top: Number.isFinite(Number(settings.top))
           ? Math.round(settings.top)
           : null,
@@ -228,15 +284,18 @@
         durationMinutes: 10,
         minFrequencyMinutes: 40,
         maxFrequencyMinutes: 60,
+
         dropTable: [
           { weatherId: "Rain", weight: 50 },
           { weatherId: "Frost", weight: 30 },
           { weatherId: "Thunderstorm", weight: 20 },
         ],
       },
+
       lunar: {
         durationMinutes: 10,
         fixedTimeSlots: [0, 48, 96, 144, 192, 240],
+
         dropTable: [
           { weatherId: "Dawn", weight: 67 },
           { weatherId: "AmberMoon", weight: 33 },
@@ -246,6 +305,7 @@
 
     let config = clone(DEFAULT_CONFIG);
     let source = "내장 기본값";
+
     const cache = new Map();
 
     function clone(value) {
@@ -253,8 +313,11 @@
     }
 
     function finite(value, fallback) {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : fallback;
+      const number = Number(value);
+
+      return Number.isFinite(number)
+        ? number
+        : fallback;
     }
 
     function normalizeDropTable(table, fallback) {
@@ -265,56 +328,76 @@
         const weight = Number(row?.weight);
 
         if (!weatherId || !Number.isFinite(weight)) continue;
-        result.push({ weatherId, weight: Math.max(0, weight) });
+
+        result.push({
+          weatherId,
+          weight: Math.max(0, weight),
+        });
       }
 
-      return result.length ? result : clone(fallback);
+      return result.length
+        ? result
+        : clone(fallback);
     }
 
     function normalizeConfig(candidate) {
-      const h = candidate?.hydro || {};
-      const l = candidate?.lunar || {};
+      const hydro = candidate?.hydro || {};
+      const lunar = candidate?.lunar || {};
 
       const result = {
         hydro: {
           durationMinutes: Math.max(
             5,
-            finite(h.durationMinutes, DEFAULT_CONFIG.hydro.durationMinutes)
+            finite(
+              hydro.durationMinutes,
+              DEFAULT_CONFIG.hydro.durationMinutes
+            )
           ),
+
           minFrequencyMinutes: Math.max(
             5,
             finite(
-              h.minFrequencyMinutes,
+              hydro.minFrequencyMinutes,
               DEFAULT_CONFIG.hydro.minFrequencyMinutes
             )
           ),
+
           maxFrequencyMinutes: Math.max(
             5,
             finite(
-              h.maxFrequencyMinutes,
+              hydro.maxFrequencyMinutes,
               DEFAULT_CONFIG.hydro.maxFrequencyMinutes
             )
           ),
+
           dropTable: normalizeDropTable(
-            h.dropTable,
+            hydro.dropTable,
             DEFAULT_CONFIG.hydro.dropTable
           ),
         },
+
         lunar: {
           durationMinutes: Math.max(
             5,
-            finite(l.durationMinutes, DEFAULT_CONFIG.lunar.durationMinutes)
+            finite(
+              lunar.durationMinutes,
+              DEFAULT_CONFIG.lunar.durationMinutes
+            )
           ),
-          fixedTimeSlots: Array.isArray(l.fixedTimeSlots)
-            ? l.fixedTimeSlots
-                .map((v) => Math.round(Number(v)))
+
+          fixedTimeSlots: Array.isArray(lunar.fixedTimeSlots)
+            ? lunar.fixedTimeSlots
+                .map((value) => Math.round(Number(value)))
                 .filter(
-                  (v) =>
-                    Number.isFinite(v) && v >= 0 && v < SLOTS_PER_DAY
+                  (value) =>
+                    Number.isFinite(value) &&
+                    value >= 0 &&
+                    value < SLOTS_PER_DAY
                 )
             : clone(DEFAULT_CONFIG.lunar.fixedTimeSlots),
+
           dropTable: normalizeDropTable(
-            l.dropTable,
+            lunar.dropTable,
             DEFAULT_CONFIG.lunar.dropTable
           ),
         },
@@ -335,6 +418,7 @@
       }
 
       result.lunar.fixedTimeSlots.sort((a, b) => a - b);
+
       return result;
     }
 
@@ -345,20 +429,35 @@
             method: "GET",
             url,
             timeout: 8000,
-            onload: (res) =>
-              res.status >= 200 && res.status < 300
-                ? resolve(String(res.responseText || ""))
-                : reject(new Error(`HTTP ${res.status}`)),
-            onerror: () => reject(new Error("network error")),
-            ontimeout: () => reject(new Error("timeout")),
+
+            onload: (response) => {
+              if (
+                response.status >= 200 &&
+                response.status < 300
+              ) {
+                resolve(String(response.responseText || ""));
+              } else {
+                reject(new Error(`HTTP ${response.status}`));
+              }
+            },
+
+            onerror: () =>
+              reject(new Error("network error")),
+
+            ontimeout: () =>
+              reject(new Error("timeout")),
           });
+
           return;
         }
 
         fetch(url, { cache: "no-store" })
-          .then((res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.text();
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            return response.text();
           })
           .then(resolve)
           .catch(reject);
@@ -371,33 +470,50 @@
           `\\b(?:const|let|var)\\s+${name}\\s*=\\s*\\{`,
           "m"
         ).exec(text) ||
-        new RegExp(`\\b${name}\\s*=\\s*\\{`, "m").exec(text);
+        new RegExp(
+          `\\b${name}\\s*=\\s*\\{`,
+          "m"
+        ).exec(text);
 
       if (!match) return null;
 
       const start = text.indexOf("{", match.index);
+
       let depth = 0;
       let quote = "";
       let escaped = false;
 
-      for (let i = start; i < text.length; i++) {
-        const ch = text[i];
+      for (let index = start; index < text.length; index++) {
+        const character = text[index];
 
         if (quote) {
-          if (escaped) escaped = false;
-          else if (ch === "\\") escaped = true;
-          else if (ch === quote) quote = "";
+          if (escaped) {
+            escaped = false;
+          } else if (character === "\\") {
+            escaped = true;
+          } else if (character === quote) {
+            quote = "";
+          }
+
           continue;
         }
 
-        if (ch === '"' || ch === "'" || ch === "`") {
-          quote = ch;
+        if (
+          character === '"' ||
+          character === "'" ||
+          character === "`"
+        ) {
+          quote = character;
           continue;
         }
 
-        if (ch === "{") depth++;
-        else if (ch === "}" && --depth === 0) {
-          return text.slice(start, i + 1);
+        if (character === "{") {
+          depth++;
+        } else if (
+          character === "}" &&
+          --depth === 0
+        ) {
+          return text.slice(start, index + 1);
         }
       }
 
@@ -410,7 +526,9 @@
         "m"
       ).exec(text);
 
-      return match ? Number(match[1]) : undefined;
+      return match
+        ? Number(match[1])
+        : undefined;
     }
 
     function readNumberArray(text, name) {
@@ -423,21 +541,26 @@
 
       const values = match[1]
         .split(",")
-        .map((v) => Number(v.trim()))
+        .map((value) => Number(value.trim()))
         .filter(Number.isFinite);
 
-      return values.length ? values : undefined;
+      return values.length
+        ? values
+        : undefined;
     }
 
     function readDropTable(text) {
       const result = [];
       const objects = /\{([^{}]+)\}/g;
+
       let match;
 
       while ((match = objects.exec(text))) {
         const row = match[1];
+
         const weather =
           /\bweatherId\s*:\s*["']([^"']+)["']/.exec(row);
+
         const weight =
           /\bweight\s*:\s*(-?\d+(?:\.\d+)?)/.exec(row);
 
@@ -449,7 +572,9 @@
         });
       }
 
-      return result.length ? result : undefined;
+      return result.length
+        ? result
+        : undefined;
     }
 
     function parseConfig(text) {
@@ -463,25 +588,37 @@
       return normalizeConfig({
         hydro: hydro
           ? {
-              durationMinutes: readNumber(hydro, "durationMinutes"),
+              durationMinutes: readNumber(
+                hydro,
+                "durationMinutes"
+              ),
+
               minFrequencyMinutes: readNumber(
                 hydro,
                 "minFrequencyMinutes"
               ),
+
               maxFrequencyMinutes: readNumber(
                 hydro,
                 "maxFrequencyMinutes"
               ),
+
               dropTable: readDropTable(hydro),
             }
           : {},
+
         lunar: lunar
           ? {
-              durationMinutes: readNumber(lunar, "durationMinutes"),
+              durationMinutes: readNumber(
+                lunar,
+                "durationMinutes"
+              ),
+
               fixedTimeSlots: readNumberArray(
                 lunar,
                 "fixedTimeSlots"
               ),
+
               dropTable: readDropTable(lunar),
             }
           : {},
@@ -490,9 +627,13 @@
 
     async function loadAriesConfig() {
       try {
-        config = parseConfig(await requestText(ARIES_URL));
+        config = parseConfig(
+          await requestText(ARIES_URL)
+        );
+
         source = "Arie's Mod";
         cache.clear();
+
         updateHud();
       } catch {
         source = "내장 기본값";
@@ -500,29 +641,41 @@
     }
 
     function mashFactory() {
-      let n = 4022871197;
+      let number = 4022871197;
 
       return function mash(data) {
         data = String(data);
 
-        for (let i = 0; i < data.length; i++) {
-          n += data.charCodeAt(i);
+        for (
+          let index = 0;
+          index < data.length;
+          index++
+        ) {
+          number += data.charCodeAt(index);
 
-          let h = 0.02519603282416938 * n;
-          n = h >>> 0;
-          h -= n;
-          h *= n;
-          n = h >>> 0;
-          h -= n;
-          n += (h * 4294967296) >>> 0;
+          let value =
+            0.02519603282416938 * number;
+
+          number = value >>> 0;
+          value -= number;
+          value *= number;
+          number = value >>> 0;
+          value -= number;
+
+          number +=
+            (value * 4294967296) >>> 0;
         }
 
-        return (n >>> 0) * 2.3283064365386963e-10;
+        return (
+          (number >>> 0) *
+          2.3283064365386963e-10
+        );
       };
     }
 
     function createRandom(seed) {
       const mash = mashFactory();
+
       let s0 = mash(" ");
       let s1 = mash(" ");
       let s2 = mash(" ");
@@ -531,17 +684,18 @@
       seed = String(seed);
 
       s0 -= mash(seed);
-      if (s0 < 0) s0++;
+      if (s0 < 0) s0 += 1;
 
       s1 -= mash(seed);
-      if (s1 < 0) s1++;
+      if (s1 < 0) s1 += 1;
 
       s2 -= mash(seed);
-      if (s2 < 0) s2++;
+      if (s2 < 0) s2 += 1;
 
       return function random() {
         const value =
-          2091639 * s0 + carry * 2.3283064365386963e-10;
+          2091639 * s0 +
+          carry * 2.3283064365386963e-10;
 
         s0 = s1;
         s1 = s2;
@@ -553,103 +707,171 @@
 
     function weightedPick(table, random) {
       const total = table.reduce(
-        (sum, row) => sum + Number(row.weight || 0),
+        (sum, row) =>
+          sum + Number(row.weight || 0),
         0
       );
 
-      if (!(total > 0)) return table[0]?.weatherId || null;
+      if (!(total > 0)) {
+        return table[0]?.weatherId || null;
+      }
 
       let roll = random() * total;
 
       for (const row of table) {
         roll -= Number(row.weight || 0);
-        if (roll <= 0) return row.weatherId;
+
+        if (roll <= 0) {
+          return row.weatherId;
+        }
       }
 
-      return table[table.length - 1]?.weatherId || null;
+      return (
+        table[table.length - 1]?.weatherId ||
+        null
+      );
     }
 
     function startOfUtcDay(ms) {
-      const d = new Date(ms);
+      const date = new Date(ms);
 
       return Date.UTC(
-        d.getUTCFullYear(),
-        d.getUTCMonth(),
-        d.getUTCDate()
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate()
       );
     }
 
     function dayKey(ms) {
-      return new Date(startOfUtcDay(ms)).toISOString().slice(0, 10);
+      return new Date(
+        startOfUtcDay(ms)
+      )
+        .toISOString()
+        .slice(0, 10);
     }
 
     function slotIndex(ms) {
       return clamp(
-        Math.floor((ms - startOfUtcDay(ms)) / SLOT_MS),
+        Math.floor(
+          (ms - startOfUtcDay(ms)) /
+            SLOT_MS
+        ),
         0,
         SLOTS_PER_DAY - 1
       );
     }
 
     function durationSlots(group) {
-      return Math.max(1, Math.round(group.durationMinutes / 5));
+      return Math.max(
+        1,
+        Math.round(
+          group.durationMinutes / 5
+        )
+      );
     }
 
     function buildSchedule(key) {
       const hydro = config.hydro;
       const lunar = config.lunar;
+
       const schedule = Object.create(null);
       const random = createRandom(key);
       const reserved = new Set();
 
-      const lunarDuration = durationSlots(lunar);
+      const lunarDuration =
+        durationSlots(lunar);
 
       for (const fixedSlot of lunar.fixedTimeSlots) {
-        for (let i = 0; i < lunarDuration; i++) {
-          reserved.add(fixedSlot + i);
+        for (
+          let index = 0;
+          index < lunarDuration;
+          index++
+        ) {
+          reserved.add(fixedSlot + index);
         }
       }
 
       const minSlots = Math.max(
         1,
-        Math.floor(hydro.minFrequencyMinutes / 5)
+        Math.floor(
+          hydro.minFrequencyMinutes / 5
+        )
       );
 
       const maxSlots = Math.max(
         minSlots,
-        Math.floor(hydro.maxFrequencyMinutes / 5)
+        Math.floor(
+          hydro.maxFrequencyMinutes / 5
+        )
       );
 
-      const hydroDuration = durationSlots(hydro);
-      let slot = Math.floor(random() * minSlots);
+      const hydroDuration =
+        durationSlots(hydro);
+
+      let slot = Math.floor(
+        random() * minSlots
+      );
 
       while (slot < SLOTS_PER_DAY) {
-        const weatherId = weightedPick(hydro.dropTable, random);
-        let canPlace =
-          !!weatherId && slot + hydroDuration <= SLOTS_PER_DAY;
+        const weatherId = weightedPick(
+          hydro.dropTable,
+          random
+        );
 
-        for (let i = 0; canPlace && i < hydroDuration; i++) {
-          if (reserved.has(slot + i)) canPlace = false;
+        let canPlace =
+          !!weatherId &&
+          slot + hydroDuration <=
+            SLOTS_PER_DAY;
+
+        for (
+          let index = 0;
+          canPlace &&
+          index < hydroDuration;
+          index++
+        ) {
+          if (
+            reserved.has(slot + index)
+          ) {
+            canPlace = false;
+          }
         }
 
         if (canPlace) {
-          for (let i = 0; i < hydroDuration; i++) {
-            schedule[slot + i] = weatherId;
+          for (
+            let index = 0;
+            index < hydroDuration;
+            index++
+          ) {
+            schedule[slot + index] =
+              weatherId;
           }
         }
 
         slot += Math.max(
           1,
-          minSlots + Math.floor((maxSlots - minSlots) * random())
+          minSlots +
+            Math.floor(
+              (maxSlots - minSlots) *
+                random()
+            )
         );
       }
 
       for (const fixedSlot of lunar.fixedTimeSlots) {
-        const weatherId = weightedPick(lunar.dropTable, random);
+        const weatherId = weightedPick(
+          lunar.dropTable,
+          random
+        );
+
         if (!weatherId) continue;
 
-        for (let i = 0; i < lunarDuration; i++) {
-          schedule[fixedSlot + i] = weatherId;
+        for (
+          let index = 0;
+          index < lunarDuration;
+          index++
+        ) {
+          schedule[fixedSlot + index] =
+            weatherId;
         }
       }
 
@@ -657,24 +879,44 @@
     }
 
     function scheduleForDay(key) {
-      if (cache.has(key)) return cache.get(key);
+      if (cache.has(key)) {
+        return cache.get(key);
+      }
 
-      const schedule = buildSchedule(key);
+      const schedule =
+        buildSchedule(key);
+
       cache.set(key, schedule);
 
       while (cache.size > 6) {
-        cache.delete(cache.keys().next().value);
+        cache.delete(
+          cache.keys().next().value
+        );
       }
 
       return schedule;
     }
 
-    function firstSlot(schedule, slot, weatherId) {
-      while (slot > 0 && schedule[slot - 1] === weatherId) slot--;
+    function firstSlot(
+      schedule,
+      slot,
+      weatherId
+    ) {
+      while (
+        slot > 0 &&
+        schedule[slot - 1] === weatherId
+      ) {
+        slot--;
+      }
+
       return slot;
     }
 
-    function lastSlot(schedule, slot, weatherId) {
+    function lastSlot(
+      schedule,
+      slot,
+      weatherId
+    ) {
       while (
         slot < SLOTS_PER_DAY - 1 &&
         schedule[slot + 1] === weatherId
@@ -686,10 +928,16 @@
     }
 
     function currentEvent(now) {
-      const dayStart = startOfUtcDay(now);
-      const schedule = scheduleForDay(dayKey(now));
+      const dayStart =
+        startOfUtcDay(now);
+
+      const schedule =
+        scheduleForDay(dayKey(now));
+
       const slot = slotIndex(now);
-      const weatherId = schedule[slot] || null;
+
+      const weatherId =
+        schedule[slot] || null;
 
       if (!weatherId) {
         const next = nextEvent(now);
@@ -697,50 +945,106 @@
         return {
           weatherId: null,
           startsAtMs: null,
-          endsAtMs: next?.startsAtMs ?? null,
+          endsAtMs:
+            next?.startsAtMs ?? null,
         };
       }
 
-      const start = firstSlot(schedule, slot, weatherId);
-      const end = lastSlot(schedule, slot, weatherId);
+      const start = firstSlot(
+        schedule,
+        slot,
+        weatherId
+      );
+
+      const end = lastSlot(
+        schedule,
+        slot,
+        weatherId
+      );
 
       return {
         weatherId,
-        startsAtMs: dayStart + start * SLOT_MS,
-        endsAtMs: dayStart + (end + 1) * SLOT_MS,
+
+        startsAtMs:
+          dayStart +
+          start * SLOT_MS,
+
+        endsAtMs:
+          dayStart +
+          (end + 1) * SLOT_MS,
       };
     }
 
     function nextEvent(now) {
-      const todayStart = startOfUtcDay(now);
-      const todaySchedule = scheduleForDay(dayKey(now));
-      const currentSlot = slotIndex(now);
-      const currentWeather = todaySchedule[currentSlot] || null;
+      const todayStart =
+        startOfUtcDay(now);
 
-      const firstSearchSlot = currentWeather
-        ? lastSlot(todaySchedule, currentSlot, currentWeather) + 1
-        : currentSlot + 1;
+      const todaySchedule =
+        scheduleForDay(dayKey(now));
+
+      const currentSlot =
+        slotIndex(now);
+
+      const currentWeather =
+        todaySchedule[currentSlot] ||
+        null;
+
+      const firstSearchSlot =
+        currentWeather
+          ? lastSlot(
+              todaySchedule,
+              currentSlot,
+              currentWeather
+            ) + 1
+          : currentSlot + 1;
 
       for (
         let dayOffset = 0;
         dayOffset < NORMAL_LOOKAHEAD_DAYS;
         dayOffset++
       ) {
-        const dayStart = todayStart + dayOffset * DAY_MS;
-        const key = new Date(dayStart).toISOString().slice(0, 10);
-        const schedule = scheduleForDay(key);
-        const start = dayOffset === 0 ? firstSearchSlot : 0;
+        const dayStart =
+          todayStart +
+          dayOffset * DAY_MS;
 
-        for (let slot = start; slot < SLOTS_PER_DAY; slot++) {
-          const weatherId = schedule[slot];
+        const key = new Date(dayStart)
+          .toISOString()
+          .slice(0, 10);
+
+        const schedule =
+          scheduleForDay(key);
+
+        const start =
+          dayOffset === 0
+            ? firstSearchSlot
+            : 0;
+
+        for (
+          let slot = start;
+          slot < SLOTS_PER_DAY;
+          slot++
+        ) {
+          const weatherId =
+            schedule[slot];
+
           if (!weatherId) continue;
 
-          const end = lastSlot(schedule, slot, weatherId);
+          const end = lastSlot(
+            schedule,
+            slot,
+            weatherId
+          );
 
           return {
             weatherId,
-            startsAtMs: dayStart + slot * SLOT_MS,
-            endsAtMs: dayStart + (end + 1) * SLOT_MS,
+
+            startsAtMs:
+              dayStart +
+              slot * SLOT_MS,
+
+            endsAtMs:
+              dayStart +
+              (end + 1) * SLOT_MS,
           };
         }
       }
@@ -748,12 +1052,17 @@
       return null;
     }
 
-    function nextEventList(now, count) {
+    function nextEventList(
+      now,
+      count
+    ) {
       const result = [];
       let cursor = now;
 
       while (result.length < count) {
-        const event = nextEvent(cursor);
+        const event =
+          nextEvent(cursor);
+
         if (!event) break;
 
         result.push(event);
@@ -763,9 +1072,15 @@
       return result;
     }
 
-    function nextLunarEventList(now, count) {
+    function nextLunarEventList(
+      now,
+      count
+    ) {
       const result = [];
-      const todayStart = startOfUtcDay(now);
+
+      const todayStart =
+        startOfUtcDay(now);
+
       const slotsPerDay = Math.max(
         1,
         config.lunar.fixedTimeSlots.length
@@ -776,32 +1091,54 @@
         Math.ceil(count / slotsPerDay) + 1
       );
 
-      const durationMs = durationSlots(config.lunar) * SLOT_MS;
+      const durationMs =
+        durationSlots(config.lunar) *
+        SLOT_MS;
 
       for (
         let dayOffset = 0;
-        dayOffset < lookaheadDays && result.length < count;
+        dayOffset < lookaheadDays &&
+        result.length < count;
         dayOffset++
       ) {
-        const dayStart = todayStart + dayOffset * DAY_MS;
-        const key = new Date(dayStart).toISOString().slice(0, 10);
-        const schedule = scheduleForDay(key);
+        const dayStart =
+          todayStart +
+          dayOffset * DAY_MS;
 
-        for (const slot of config.lunar.fixedTimeSlots) {
-          const startsAtMs = dayStart + slot * SLOT_MS;
+        const key = new Date(dayStart)
+          .toISOString()
+          .slice(0, 10);
+
+        const schedule =
+          scheduleForDay(key);
+
+        for (
+          const slot of
+          config.lunar.fixedTimeSlots
+        ) {
+          const startsAtMs =
+            dayStart +
+            slot * SLOT_MS;
 
           if (startsAtMs <= now) continue;
 
-          const weatherId = schedule[slot];
+          const weatherId =
+            schedule[slot];
+
           if (!weatherId) continue;
 
           result.push({
             weatherId,
             startsAtMs,
-            endsAtMs: startsAtMs + durationMs,
+
+            endsAtMs:
+              startsAtMs +
+              durationMs,
           });
 
-          if (result.length >= count) break;
+          if (result.length >= count) {
+            break;
+          }
         }
       }
 
@@ -809,28 +1146,57 @@
     }
 
     function displayName(value) {
-      const raw = String(value ?? "").trim();
-      const key = raw.toLowerCase().replace(/\s+/g, "");
+      const raw =
+        String(value ?? "").trim();
 
-      if (!key || key === "sunny" || key === "clearskies") {
+      const key = raw
+        .toLowerCase()
+        .replace(/\s+/g, "");
+
+      if (
+        !key ||
+        key === "sunny" ||
+        key === "clearskies"
+      ) {
         return "Clear Skies";
       }
 
-      if (key === "frost" || key === "snow") return "Snow";
-      if (key === "ambermoon" || key === "harvestmoon") {
+      if (
+        key === "frost" ||
+        key === "snow"
+      ) {
+        return "Snow";
+      }
+
+      if (
+        key === "ambermoon" ||
+        key === "harvestmoon"
+      ) {
         return "Amber Moon";
       }
 
-      if (key === "rain") return "Rain";
-      if (key === "thunderstorm" || key === "thunder") {
+      if (key === "rain") {
+        return "Rain";
+      }
+
+      if (
+        key === "thunderstorm" ||
+        key === "thunder"
+      ) {
         return "Thunderstorm";
       }
 
-      if (key === "dawn") return "Dawn";
+      if (key === "dawn") {
+        return "Dawn";
+      }
+
       return raw || "Clear Skies";
     }
 
-    setTimeout(loadAriesConfig, 1200);
+    setTimeout(
+      loadAriesConfig,
+      1200
+    );
 
     return {
       currentEvent,
@@ -843,38 +1209,70 @@
 
   function weatherStatus() {
     if (!gameWeatherUpdatedAt) {
-      return { state: "WAITING", stale: false, ageMs: null };
+      return {
+        state: "WAITING",
+        stale: false,
+        ageMs: null,
+      };
     }
 
-    const ageMs = Math.max(0, Date.now() - gameWeatherUpdatedAt);
-    const stale = ageMs >= STALE_MS;
+    const ageMs = Math.max(
+      0,
+      Date.now() -
+        gameWeatherUpdatedAt
+    );
+
+    const stale =
+      ageMs >= STALE_MS;
 
     return {
-      state: stale ? "STALE" : "LIVE",
+      state: stale
+        ? "STALE"
+        : "LIVE",
+
       stale,
       ageMs,
     };
   }
 
   function currentRemainingMs() {
-    if (gameWeatherId === undefined || weatherStatus().stale) {
+    if (gameWeatherId === undefined) {
       return null;
     }
 
-    const now = Date.now();
-    const current = FORECAST.currentEvent(now);
+    const now = gameNow();
+    const current =
+      FORECAST.currentEvent(now);
 
-    if (!Number.isFinite(Number(current?.endsAtMs))) return null;
-
-    if ((current.weatherId ?? null) !== (gameWeatherId ?? null)) {
+    if (
+      !Number.isFinite(
+        Number(current?.endsAtMs)
+      )
+    ) {
       return null;
     }
 
-    return Math.max(0, current.endsAtMs - now);
+    if (
+      (current.weatherId ?? null) !==
+      (gameWeatherId ?? null)
+    ) {
+      return null;
+    }
+
+    return Math.max(
+      0,
+      current.endsAtMs - now
+    );
   }
 
   function normalizeGameWeather(value) {
-    if (value == null || value === "" || value === false) return null;
+    if (
+      value == null ||
+      value === "" ||
+      value === false
+    ) {
+      return null;
+    }
 
     if (typeof value === "object") {
       for (const candidate of [
@@ -885,14 +1283,20 @@
         value.type,
         value.value,
       ]) {
-        const normalized = normalizeGameWeather(candidate);
-        if (normalized !== undefined) return normalized;
+        const normalized =
+          normalizeGameWeather(candidate);
+
+        if (normalized !== undefined) {
+          return normalized;
+        }
       }
 
       return undefined;
     }
 
-    const text = String(value).trim();
+    const text =
+      String(value).trim();
+
     if (!text) return null;
 
     if (
@@ -904,7 +1308,12 @@
       return null;
     }
 
-    if (/^rain$/i.test(text) || text === "비") return "Rain";
+    if (
+      /^rain$/i.test(text) ||
+      text === "비"
+    ) {
+      return "Rain";
+    }
 
     if (
       /^frost$/i.test(text) ||
@@ -952,103 +1361,228 @@
     return undefined;
   }
 
-  function updateGameWeather(raw, source) {
-    const normalized = normalizeGameWeather(raw);
-    if (normalized === undefined) return;
+  function updateGameWeather(
+    raw,
+    source
+  ) {
+    const normalized =
+      normalizeGameWeather(raw);
+
+    if (normalized === undefined) {
+      return;
+    }
 
     gameWeatherId = normalized;
-    gameWeatherSource = source || "게임 상태";
-    gameWeatherUpdatedAt = Date.now();
+    gameWeatherSource =
+      source || "게임 상태";
+
+    gameWeatherUpdatedAt =
+      Date.now();
 
     updateHud();
   }
 
   function processFullState(state) {
     try {
-      const data = state?.child?.data;
+      const data =
+        state?.child?.data;
+
+      if (!data) return;
 
       if (
-        data &&
-        Object.prototype.hasOwnProperty.call(data, "weather")
+        Object.prototype.hasOwnProperty.call(
+          data,
+          "weather"
+        )
       ) {
-        updateGameWeather(data.weather, "전체 상태");
+        updateGameWeather(
+          data.weather,
+          "전체 상태"
+        );
+      }
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          data,
+          "currentTime"
+        )
+      ) {
+        updateServerTime(
+          data.currentTime
+        );
       }
     } catch {}
   }
 
   function processPayload(payload) {
-    if (!payload || typeof payload !== "object") return;
+    if (
+      !payload ||
+      typeof payload !== "object"
+    ) {
+      return;
+    }
 
-    if (payload.fullState) processFullState(payload.fullState);
-    if (payload.child?.data) processFullState(payload);
+    if (payload.fullState) {
+      processFullState(
+        payload.fullState
+      );
+    }
 
-    if (Array.isArray(payload.patches)) {
-      for (const patch of payload.patches) {
-        if (patch?.path === "/child/data/weather") {
-          updateGameWeather(patch.value, "날씨 변경 패치");
+    if (payload.child?.data) {
+      processFullState(payload);
+    }
+
+    if (
+      Array.isArray(
+        payload.patches
+      )
+    ) {
+      for (
+        const patch of
+        payload.patches
+      ) {
+        if (
+          patch?.path ===
+          "/child/data/weather"
+        ) {
+          updateGameWeather(
+            patch.value,
+            "날씨 변경 패치"
+          );
+        } else if (
+          patch?.path ===
+          "/child/data/currentTime"
+        ) {
+          updateServerTime(
+            patch.value
+          );
         }
       }
     }
   }
 
   function parseMessage(text) {
-    if (!text || typeof text !== "string") return;
+    if (
+      !text ||
+      typeof text !== "string"
+    ) {
+      return;
+    }
 
-    const trimmed = text.trim();
+    const trimmed =
+      text.trim();
+
     if (!trimmed) return;
 
     try {
-      processPayload(JSON.parse(trimmed));
+      processPayload(
+        JSON.parse(trimmed)
+      );
+
       return;
     } catch {}
 
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
+    const start =
+      trimmed.indexOf("{");
 
-    if (start < 0 || end <= start) return;
+    const end =
+      trimmed.lastIndexOf("}");
+
+    if (
+      start < 0 ||
+      end <= start
+    ) {
+      return;
+    }
 
     try {
-      processPayload(JSON.parse(trimmed.slice(start, end + 1)));
+      processPayload(
+        JSON.parse(
+          trimmed.slice(
+            start,
+            end + 1
+          )
+        )
+      );
     } catch {}
   }
 
   function handleSocketData(data) {
     try {
-      if (typeof data === "string") {
+      if (
+        typeof data === "string"
+      ) {
         parseMessage(data);
-      } else if (data instanceof ArrayBuffer) {
-        parseMessage(new TextDecoder().decode(data));
-      } else if (data instanceof Blob) {
-        data.text().then(parseMessage).catch(() => {});
+      } else if (
+        data instanceof ArrayBuffer
+      ) {
+        parseMessage(
+          new TextDecoder().decode(
+            data
+          )
+        );
+      } else if (
+        data instanceof Blob
+      ) {
+        data
+          .text()
+          .then(parseMessage)
+          .catch(() => {});
       }
     } catch {}
   }
 
   function installWebSocketReader() {
-    if (W.__MG_WEATHER_HUD_JH_WS_INSTALLED__) return;
+    if (
+      W.__MG_WEATHER_HUD_JH_WS_INSTALLED__
+    ) {
+      return;
+    }
 
-    const NativeWebSocket = W.WebSocket;
+    const NativeWebSocket =
+      W.WebSocket;
+
     if (!NativeWebSocket) return;
 
-    W.__MG_WEATHER_HUD_JH_WS_INSTALLED__ = true;
+    W.__MG_WEATHER_HUD_JH_WS_INSTALLED__ =
+      true;
 
-    function WrappedWebSocket(...args) {
-      const socket = new NativeWebSocket(...args);
+    function WrappedWebSocket(
+      ...args
+    ) {
+      const socket =
+        new NativeWebSocket(...args);
 
       try {
-        socket.addEventListener("message", (event) =>
-          handleSocketData(event.data)
+        socket.addEventListener(
+          "message",
+          (event) => {
+            handleSocketData(
+              event.data
+            );
+          }
         );
       } catch {}
 
       return socket;
     }
 
-    WrappedWebSocket.prototype = NativeWebSocket.prototype;
+    WrappedWebSocket.prototype =
+      NativeWebSocket.prototype;
 
-    for (const property of Object.getOwnPropertyNames(NativeWebSocket)) {
+    for (
+      const property of
+      Object.getOwnPropertyNames(
+        NativeWebSocket
+      )
+    ) {
       try {
-        if (!(property in WrappedWebSocket)) {
+        if (
+          !(
+            property in
+            WrappedWebSocket
+          )
+        ) {
           Object.defineProperty(
             WrappedWebSocket,
             property,
@@ -1061,31 +1595,67 @@
       } catch {}
     }
 
-    W.WebSocket = WrappedWebSocket;
+    W.WebSocket =
+      WrappedWebSocket;
   }
 
   installWebSocketReader();
 
   function nextCollapseMode() {
-    if (settings.collapseMode === FULL) return HEADER;
-    if (settings.collapseMode === HEADER) return SUMMARY;
+    if (
+      settings.collapseMode === FULL
+    ) {
+      return HEADER;
+    }
+
+    if (
+      settings.collapseMode === HEADER
+    ) {
+      return SUMMARY;
+    }
+
     return FULL;
   }
 
   function collapseIcon() {
-    if (settings.collapseMode === FULL) return "▤";
-    if (settings.collapseMode === HEADER) return "▣";
+    if (
+      settings.collapseMode === FULL
+    ) {
+      return "▤";
+    }
+
+    if (
+      settings.collapseMode === HEADER
+    ) {
+      return "▣";
+    }
+
     return "▁";
   }
 
   function collapseTitle() {
-    if (settings.collapseMode === FULL) return "완전히 접기";
-    if (settings.collapseMode === HEADER) return "요약 보기";
+    if (
+      settings.collapseMode === FULL
+    ) {
+      return "완전히 접기";
+    }
+
+    if (
+      settings.collapseMode === HEADER
+    ) {
+      return "요약 보기";
+    }
+
     return "전체 펼치기";
   }
 
   function applyHudState(box) {
     if (!box) return;
+
+    box.style.setProperty(
+      "--mg-nw-opacity",
+      String(clampInt(settings.opacity, 5, 100, DEFAULT_OPACITY) / 100)
+    );
 
     box.classList.toggle(
       "collapse-summary",
@@ -1097,59 +1667,110 @@
       settings.collapseMode === HEADER
     );
 
-    box.classList.toggle("settings-open", settings.settingsOpen);
-    box.classList.toggle("hide-debug", !settings.showDebug);
+    box.classList.toggle(
+      "settings-open",
+      settings.settingsOpen
+    );
+
+    box.classList.toggle(
+      "hide-debug",
+      !settings.showDebug
+    );
   }
 
-  function safePosition(box, desiredLeft, desiredTop) {
-    const width = box.offsetWidth || 340;
-    const height = box.offsetHeight || 220;
+  function safePosition(
+    box,
+    desiredLeft,
+    desiredTop
+  ) {
+    const width =
+      box.offsetWidth || 340;
+
+    const height =
+      box.offsetHeight || 220;
 
     const maxLeft = Math.max(
       MARGIN,
-      window.innerWidth - width - MARGIN
+      window.innerWidth -
+        width -
+        MARGIN
     );
 
     const maxTop = Math.max(
       MARGIN,
-      window.innerHeight - height - MARGIN
+      window.innerHeight -
+        height -
+        MARGIN
     );
 
     return {
       left: clamp(
-        Number.isFinite(desiredLeft) ? desiredLeft : maxLeft,
+        Number.isFinite(desiredLeft)
+          ? desiredLeft
+          : maxLeft,
         MARGIN,
         maxLeft
       ),
+
       top: clamp(
-        Number.isFinite(desiredTop) ? desiredTop : MARGIN,
+        Number.isFinite(desiredTop)
+          ? desiredTop
+          : MARGIN,
         MARGIN,
         maxTop
       ),
     };
   }
 
-  function applyPosition(box, left, top, save) {
-    const position = safePosition(box, left, top);
+  function applyPosition(
+    box,
+    left,
+    top,
+    save
+  ) {
+    const position =
+      safePosition(
+        box,
+        left,
+        top
+      );
 
-    box.style.left = `${position.left}px`;
-    box.style.top = `${position.top}px`;
+    box.style.left =
+      `${position.left}px`;
+
+    box.style.top =
+      `${position.top}px`;
+
     box.style.right = "auto";
     box.style.bottom = "auto";
 
     if (!save) return;
 
-    settings.left = Math.round(position.left);
-    settings.top = Math.round(position.top);
+    settings.left =
+      Math.round(position.left);
+
+    settings.top =
+      Math.round(position.top);
+
     saveSettings();
   }
 
-  function reapplyPosition(box, save) {
-    applyPosition(box, settings.left, settings.top, save);
+  function reapplyPosition(
+    box,
+    save
+  ) {
+    applyPosition(
+      box,
+      settings.left,
+      settings.top,
+      save
+    );
   }
 
   function installDrag(box) {
-    const handle = $("mg-nw-drag-handle");
+    const handle =
+      $("mg-nw-drag-handle");
+
     if (!handle) return;
 
     let dragging = false;
@@ -1159,30 +1780,52 @@
     let startTop = 0;
 
     function begin(event) {
-      if (event.target?.closest?.("button,input,label")) return;
+      if (
+        event.target?.closest?.(
+          "button,input,label"
+        )
+      ) {
+        return;
+      }
 
-      const point = event.touches ? event.touches[0] : event;
-      const rect = box.getBoundingClientRect();
+      const point =
+        event.touches
+          ? event.touches[0]
+          : event;
+
+      const rect =
+        box.getBoundingClientRect();
 
       dragging = true;
+
       startX = point.clientX;
       startY = point.clientY;
       startLeft = rect.left;
       startTop = rect.top;
 
-      box.classList.add("dragging");
+      box.classList.add(
+        "dragging"
+      );
+
       event.preventDefault();
     }
 
     function move(event) {
       if (!dragging) return;
 
-      const point = event.touches ? event.touches[0] : event;
+      const point =
+        event.touches
+          ? event.touches[0]
+          : event;
 
       applyPosition(
         box,
-        startLeft + point.clientX - startX,
-        startTop + point.clientY - startY,
+        startLeft +
+          point.clientX -
+          startX,
+        startTop +
+          point.clientY -
+          startY,
         false
       );
 
@@ -1193,47 +1836,95 @@
       if (!dragging) return;
 
       dragging = false;
-      box.classList.remove("dragging");
 
-      const rect = box.getBoundingClientRect();
-      applyPosition(box, rect.left, rect.top, true);
+      box.classList.remove(
+        "dragging"
+      );
+
+      const rect =
+        box.getBoundingClientRect();
+
+      applyPosition(
+        box,
+        rect.left,
+        rect.top,
+        true
+      );
     }
 
-    handle.addEventListener("mousedown", begin);
-    handle.addEventListener("touchstart", begin, { passive: false });
+    handle.addEventListener(
+      "mousedown",
+      begin
+    );
 
-    window.addEventListener("mousemove", move, { passive: false });
-    window.addEventListener("touchmove", move, { passive: false });
+    handle.addEventListener(
+      "touchstart",
+      begin,
+      { passive: false }
+    );
 
-    window.addEventListener("mouseup", end);
-    window.addEventListener("touchend", end);
-    window.addEventListener("touchcancel", end);
+    window.addEventListener(
+      "mousemove",
+      move,
+      { passive: false }
+    );
+
+    window.addEventListener(
+      "touchmove",
+      move,
+      { passive: false }
+    );
+
+    window.addEventListener(
+      "mouseup",
+      end
+    );
+
+    window.addEventListener(
+      "touchend",
+      end
+    );
+
+    window.addEventListener(
+      "touchcancel",
+      end
+    );
   }
 
   function createStyle() {
     if ($(STYLE_ID)) return;
 
-    const style = document.createElement("style");
+    const style =
+      document.createElement("style");
+
     style.id = STYLE_ID;
 
     style.textContent = `
-#${HUD_ID}{position:fixed;z-index:2147483647;min-width:292px;max-width:430px;color:#f7fbff;background:rgba(12,16,24,.9);border:1px solid rgba(255,255,255,.18);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.45);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;line-height:1.35;user-select:none;overflow:hidden;backdrop-filter:blur(8px)}
+#${HUD_ID}{position:fixed;z-index:2147483647;min-width:270px;max-width:410px;color:#f7fbff;background:rgba(12,16,24,var(--mg-nw-opacity,.9));border:1px solid rgba(255,255,255,.18);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.45);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;line-height:1.35;user-select:none;overflow:hidden;backdrop-filter:blur(8px)}
 #${HUD_ID}.dragging{opacity:.92}
+
 #${HUD_ID}.hide-debug #mg-nw-debug,#${HUD_ID}.collapse-header .mg-nw-body,#${HUD_ID}.collapse-summary .mg-nw-extra{display:none}
+#${HUD_ID}.collapse-summary:not(.hide-debug) .mg-nw-extra,#${HUD_ID}.collapse-header:not(.hide-debug) .mg-nw-body,#${HUD_ID}.collapse-header:not(.hide-debug) .mg-nw-extra{display:block}
+#${HUD_ID}.collapse-summary:not(.hide-debug) .mg-nw-extra>:not(#mg-nw-debug):not(.mg-nw-settings-panel),#${HUD_ID}.collapse-header:not(.hide-debug) .mg-nw-body>.mg-nw-line,#${HUD_ID}.collapse-header:not(.hide-debug) .mg-nw-extra>:not(#mg-nw-debug):not(.mg-nw-settings-panel){display:none}
 #${HUD_ID}.settings-open .mg-nw-settings-panel,#${HUD_ID}.collapse-summary.settings-open .mg-nw-extra,#${HUD_ID}.collapse-header.settings-open .mg-nw-body,#${HUD_ID}.collapse-header.settings-open .mg-nw-extra{display:block}
-#${HUD_ID}.collapse-summary.settings-open .mg-nw-extra>:not(.mg-nw-settings-panel),#${HUD_ID}.collapse-header.settings-open .mg-nw-body>.mg-nw-line,#${HUD_ID}.collapse-header.settings-open .mg-nw-extra>:not(.mg-nw-settings-panel){display:none}
-#${HUD_ID} .mg-nw-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;background:rgba(255,255,255,.08);border-bottom:1px solid rgba(255,255,255,.13);cursor:move;touch-action:none}
-#${HUD_ID} .mg-nw-title{font-weight:750;letter-spacing:.2px}
+#${HUD_ID}.collapse-summary.settings-open .mg-nw-extra>:not(.mg-nw-settings-panel):not(#mg-nw-debug),#${HUD_ID}.collapse-header.settings-open .mg-nw-body>.mg-nw-line,#${HUD_ID}.collapse-header.settings-open .mg-nw-extra>:not(.mg-nw-settings-panel):not(#mg-nw-debug){display:none}
+#${HUD_ID} .mg-nw-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;background:rgba(255,255,255,calc(.08 * var(--mg-nw-opacity,.9)));border-bottom:1px solid rgba(255,255,255,.13);cursor:move;touch-action:none}
+#${HUD_ID} .mg-nw-title{display:flex;align-items:baseline;gap:5px;font-weight:750;letter-spacing:.2px}
+#${HUD_ID} .mg-nw-version{color:rgba(230,240,255,.5);font-size:9px;font-weight:600;letter-spacing:0}
 #${HUD_ID} .mg-nw-buttons{display:flex;gap:5px;align-items:center}
 #${HUD_ID} button{appearance:none;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#f7fbff;border-radius:8px;padding:2px 7px;min-width:30px;height:26px;font-size:15px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
 #${HUD_ID} button:hover{background:rgba(255,255,255,.16)}
 #${HUD_ID} .mg-nw-body{padding:10px}
-#${HUD_ID} .mg-nw-line{display:grid;grid-template-columns:104px 1fr;gap:8px;margin:5px 0;align-items:baseline}
+#${HUD_ID} .mg-nw-line{display:grid;grid-template-columns:79px 1fr;gap:3px;margin:5px 0;align-items:baseline}
 #${HUD_ID} .mg-nw-label{color:rgba(230,240,255,.72)}
 #${HUD_ID} .mg-nw-value{color:#fff;font-weight:650}
-#${HUD_ID} .mg-nw-section-title{margin-top:10px;padding-top:9px;border-top:1px solid rgba(255,255,255,.13);color:rgba(230,240,255,.74);font-size:12px;font-weight:700}
-#${HUD_ID} .mg-nw-date-divider{margin:7px 0 3px;padding:3px 6px;border-radius:6px;background:rgba(255,255,255,.07);color:rgba(235,243,255,.82);font-size:11px;font-weight:700}
-#${HUD_ID} .mg-nw-upcoming-row{display:grid;grid-template-columns:34px 52px 1fr auto;gap:7px;align-items:center;padding:2px 0;font-size:12px}
+#${HUD_ID} .mg-nw-summary-value{display:grid;grid-template-columns:minmax(0,1fr) 68px;column-gap:4px;align-items:baseline;min-width:0}
+#${HUD_ID} .mg-nw-summary-value>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#${HUD_ID} .mg-nw-summary-time{justify-self:end;text-align:right;color:rgba(230,240,255,.75);font-weight:400;white-space:nowrap}
+#${HUD_ID} .mg-nw-section-title{margin:8px 0 3px;padding:3px 7px;border-radius:6px;background:rgba(255,255,255,calc(.055 * var(--mg-nw-opacity,.9)));color:rgba(235,243,255,.82);font-size:11px;font-weight:700;line-height:1.25;text-align:center}
+#${HUD_ID} .mg-nw-date-divider{display:flex;align-items:center;gap:7px;margin:8px 0 3px;color:rgba(230,240,255,.72);font-size:11px;font-weight:700;white-space:nowrap}
+#${HUD_ID} .mg-nw-date-divider::before,#${HUD_ID} .mg-nw-date-divider::after{content:"";height:1px;flex:1;background:rgba(255,255,255,.16)}
+#${HUD_ID} .mg-nw-upcoming-row{display:grid;grid-template-columns:24px 52px 1fr auto;column-gap:3px;align-items:center;padding:2px 0;font-size:12px}
 #${HUD_ID} .mg-nw-index{color:rgba(230,240,255,.55)}
 #${HUD_ID} .mg-nw-time,#${HUD_ID} .mg-nw-in{color:rgba(230,240,255,.75);font-variant-numeric:tabular-nums}
 #${HUD_ID} .mg-nw-name{color:#fff;font-weight:700}
@@ -1243,7 +1934,7 @@
 #${HUD_ID} .mg-nw-dawn{color:#d3b4ff;font-weight:700}
 #${HUD_ID} .mg-nw-amber{color:#ffbf5f;font-weight:700}
 #${HUD_ID} .mg-nw-empty{color:rgba(230,240,255,.58);font-size:12px;padding:3px 0}
-#${HUD_ID} .mg-nw-debug{margin-top:10px;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(0,0,0,.18);font-size:12px}
+#${HUD_ID} .mg-nw-debug{margin-top:10px;padding:8px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(12,16,24,.96);font-size:12px}
 #${HUD_ID} .mg-nw-debug-title{margin-bottom:6px;color:rgba(230,240,255,.78);font-weight:700}
 #${HUD_ID} .mg-nw-debug-row{display:grid;grid-template-columns:82px 1fr;gap:8px;margin:3px 0}
 #${HUD_ID} .mg-nw-debug-key{color:rgba(230,240,255,.58)}
@@ -1251,36 +1942,55 @@
 #${HUD_ID} .mg-nw-debug-live{color:#8ff0ad;font-weight:700}
 #${HUD_ID} .mg-nw-debug-stale{color:#ffb36b;font-weight:700}
 #${HUD_ID} .mg-nw-debug-waiting{color:#ffd86b;font-weight:700}
-#${HUD_ID} .mg-nw-settings-panel{display:none;margin-top:9px;padding:8px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.06)}
+#${HUD_ID} .mg-nw-settings-panel{display:none;margin-top:9px;padding:8px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(12,16,24,.96)}
 #${HUD_ID}.collapse-header.settings-open .mg-nw-settings-panel{margin-top:0}
 #${HUD_ID} .mg-nw-settings-title{margin-bottom:6px;font-size:12px;font-weight:700}
 #${HUD_ID} .mg-nw-setting-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:6px 0}
-#${HUD_ID} input[type=number]{width:76px;border:1px solid rgba(255,255,255,.22);border-radius:7px;background:rgba(0,0,0,.28);color:#fff;padding:3px 6px;font-size:12px}
 #${HUD_ID} input[type=checkbox]{transform:scale(1.05)}
+#${HUD_ID} input[type=range]{width:118px;accent-color:#9ecbff}
+#${HUD_ID} input[type=number]{width:76px;border:1px solid rgba(255,255,255,.22);border-radius:7px;background:rgba(0,0,0,.28);color:#fff;padding:3px 6px;font-size:12px}
+#${HUD_ID} .mg-nw-opacity-control{display:flex;align-items:center;gap:7px}
+#${HUD_ID} .mg-nw-opacity-value{width:34px;text-align:right;color:rgba(245,249,255,.9);font-variant-numeric:tabular-nums;font-size:12px}
 `;
 
-    document.documentElement.appendChild(style);
+    document.documentElement.appendChild(
+      style
+    );
   }
 
   function createHud() {
     createStyle();
     $(HUD_ID)?.remove();
 
-    const box = document.createElement("div");
+    const box =
+      document.createElement("div");
+
     box.id = HUD_ID;
 
     box.innerHTML = `
 <div class="mg-nw-head" id="mg-nw-drag-handle" title="드래그해서 HUD 위치 이동">
-  <div class="mg-nw-title">MG Weather</div>
+  <div class="mg-nw-title">MG Weather <span class="mg-nw-version">v.1.2.1</span></div>
   <div class="mg-nw-buttons">
     <button id="mg-nw-settings-btn" type="button" title="설정" aria-label="설정">⚙</button>
     <button id="mg-nw-toggle-btn" type="button" title="${collapseTitle()}" aria-label="${collapseTitle()}">${collapseIcon()}</button>
   </div>
 </div>
+
 <div class="mg-nw-body">
-  <div class="mg-nw-line"><div class="mg-nw-label">현재 날씨</div><div class="mg-nw-value" id="mg-nw-current">읽는 중...</div></div>
-  <div class="mg-nw-line"><div class="mg-nw-label">다음 날씨</div><div class="mg-nw-value" id="mg-nw-next-weather">계산 중...</div></div>
-  <div class="mg-nw-line"><div class="mg-nw-label">다음 희귀 날씨</div><div class="mg-nw-value" id="mg-nw-next-lunar">계산 중...</div></div>
+  <div class="mg-nw-line">
+    <div class="mg-nw-label">현재</div>
+    <div class="mg-nw-value mg-nw-summary-value" id="mg-nw-current">읽는 중...</div>
+  </div>
+
+  <div class="mg-nw-line">
+    <div class="mg-nw-label">다음</div>
+    <div class="mg-nw-value mg-nw-summary-value" id="mg-nw-next-weather">계산 중...</div>
+  </div>
+
+  <div class="mg-nw-line">
+    <div class="mg-nw-label">다음 희귀</div>
+    <div class="mg-nw-value mg-nw-summary-value" id="mg-nw-next-lunar">계산 중...</div>
+  </div>
 
   <div class="mg-nw-extra">
     <div class="mg-nw-section-title">다음 날씨</div>
@@ -1289,24 +1999,67 @@
     <div class="mg-nw-section-title">다음 희귀 날씨</div>
     <div id="mg-nw-lunar-list"></div>
 
-    <div class="mg-nw-debug" id="mg-nw-debug">
-      <div class="mg-nw-debug-title">디버그</div>
-      <div class="mg-nw-debug-row"><div class="mg-nw-debug-key">상태</div><div class="mg-nw-debug-value" id="mg-nw-debug-status">-</div></div>
-      <div class="mg-nw-debug-row"><div class="mg-nw-debug-key">마지막 수신</div><div class="mg-nw-debug-value" id="mg-nw-debug-age">-</div></div>
-      <div class="mg-nw-debug-row"><div class="mg-nw-debug-key">날씨 출처</div><div class="mg-nw-debug-value" id="mg-nw-debug-current-source">-</div></div>
-      <div class="mg-nw-debug-row"><div class="mg-nw-debug-key">예보 출처</div><div class="mg-nw-debug-value" id="mg-nw-debug-forecast-source">-</div></div>
-    </div>
-
     <div class="mg-nw-settings-panel">
       <div class="mg-nw-settings-title">설정</div>
-      <label class="mg-nw-setting-row"><span>디버그 표시</span><input id="mg-nw-show-debug" type="checkbox" ${settings.showDebug ? "checked" : ""}></label>
-      <label class="mg-nw-setting-row"><span>다음 날씨 개수</span><input id="mg-nw-normal-count" type="number" min="${MIN_COUNT}" max="${MAX_COUNT}" value="${settings.normalListCount}"></label>
-      <label class="mg-nw-setting-row"><span>다음 희귀 날씨 개수</span><input id="mg-nw-lunar-count" type="number" min="${MIN_COUNT}" max="${MAX_COUNT}" value="${settings.lunarListCount}"></label>
+
+      <label class="mg-nw-setting-row">
+        <span>탭 투명도</span>
+        <span class="mg-nw-opacity-control">
+          <input id="mg-nw-opacity" type="range" min="5" max="100" step="1" value="${settings.opacity}">
+          <span class="mg-nw-opacity-value" id="mg-nw-opacity-value">${settings.opacity}%</span>
+        </span>
+      </label>
+
+      <label class="mg-nw-setting-row">
+        <span>다음 날씨 개수</span>
+        <input id="mg-nw-normal-count" type="number" min="${MIN_COUNT}" step="1" max="${MAX_COUNT}" value="${settings.normalListCount}">
+      </label>
+
+      <label class="mg-nw-setting-row">
+        <span>다음 희귀 날씨 개수</span>
+        <input id="mg-nw-lunar-count" type="number" min="${MIN_COUNT}" step="1" max="${MAX_COUNT}" value="${settings.lunarListCount}">
+      </label>
+
+      <label class="mg-nw-setting-row">
+        <span>디버그 표시</span>
+        <input id="mg-nw-show-debug" type="checkbox" ${settings.showDebug ? "checked" : ""}>
+      </label>
+    </div>
+
+    <div class="mg-nw-debug" id="mg-nw-debug">
+      <div class="mg-nw-debug-title">디버그</div>
+
+      <div class="mg-nw-debug-row">
+        <div class="mg-nw-debug-key">상태</div>
+        <div class="mg-nw-debug-value" id="mg-nw-debug-status">-</div>
+      </div>
+
+      <div class="mg-nw-debug-row">
+        <div class="mg-nw-debug-key">마지막 수신</div>
+        <div class="mg-nw-debug-value" id="mg-nw-debug-age">-</div>
+      </div>
+
+      <div class="mg-nw-debug-row">
+        <div class="mg-nw-debug-key">날씨 출처</div>
+        <div class="mg-nw-debug-value" id="mg-nw-debug-current-source">-</div>
+      </div>
+
+      <div class="mg-nw-debug-row">
+        <div class="mg-nw-debug-key">예보 출처</div>
+        <div class="mg-nw-debug-value" id="mg-nw-debug-forecast-source">-</div>
+      </div>
+
+      <div class="mg-nw-debug-row">
+        <div class="mg-nw-debug-key">시간 기준</div>
+        <div class="mg-nw-debug-value" id="mg-nw-debug-time-source">-</div>
+      </div>
     </div>
   </div>
 </div>`;
 
-    document.documentElement.appendChild(box);
+    document.documentElement.appendChild(
+      box
+    );
 
     applyHudState(box);
     reapplyPosition(box, false);
@@ -1315,75 +2068,157 @@
   }
 
   function wireHudEvents(box) {
-    const toggle = $("mg-nw-toggle-btn");
-    const settingsButton = $("mg-nw-settings-btn");
-    const debugInput = $("mg-nw-show-debug");
-    const normalInput = $("mg-nw-normal-count");
-    const lunarInput = $("mg-nw-lunar-count");
+    const toggle =
+      $("mg-nw-toggle-btn");
 
-    toggle?.addEventListener("click", (event) => {
-      event.stopPropagation();
+    const settingsButton =
+      $("mg-nw-settings-btn");
 
-      settings.collapseMode = nextCollapseMode();
-      settings.settingsOpen = false;
+    const debugInput =
+      $("mg-nw-show-debug");
 
-      applyHudState(box);
+    const opacityInput =
+      $("mg-nw-opacity");
 
-      toggle.textContent = collapseIcon();
-      toggle.title = collapseTitle();
-      toggle.setAttribute("aria-label", collapseTitle());
+    const opacityValue =
+      $("mg-nw-opacity-value");
 
-      saveSettings();
-      setTimeout(() => reapplyPosition(box, true), 0);
-    });
+    const normalInput =
+      $("mg-nw-normal-count");
 
-    settingsButton?.addEventListener("click", (event) => {
-      event.stopPropagation();
+    const lunarInput =
+      $("mg-nw-lunar-count");
+toggle?.addEventListener(
+      "click",
+      (event) => {
+        event.stopPropagation();
 
-      settings.settingsOpen = !settings.settingsOpen;
-      applyHudState(box);
-      saveSettings();
+        settings.collapseMode =
+          nextCollapseMode();
 
-      setTimeout(() => reapplyPosition(box, true), 0);
-    });
+        applyHudState(box);
 
-    debugInput?.addEventListener("change", () => {
-      settings.showDebug = debugInput.checked;
-      saveSettings();
-      updateHud();
-    });
+        toggle.textContent =
+          collapseIcon();
 
-    normalInput?.addEventListener("change", () => {
-      settings.normalListCount = clampInt(
-        normalInput.value,
-        MIN_COUNT,
-        MAX_COUNT,
-        DEFAULT_NORMAL_COUNT
-      );
+        toggle.title =
+          collapseTitle();
 
-      normalInput.value = settings.normalListCount;
-      saveSettings();
-      updateHud();
-    });
+        toggle.setAttribute(
+          "aria-label",
+          collapseTitle()
+        );
 
-    lunarInput?.addEventListener("change", () => {
-      settings.lunarListCount = clampInt(
-        lunarInput.value,
-        MIN_COUNT,
-        MAX_COUNT,
-        DEFAULT_LUNAR_COUNT
-      );
+        saveSettings();
 
-      lunarInput.value = settings.lunarListCount;
-      saveSettings();
-      updateHud();
-    });
+        setTimeout(
+          () =>
+            reapplyPosition(
+              box,
+              true
+            ),
+          0
+        );
+      }
+    );
+
+    settingsButton?.addEventListener(
+      "click",
+      (event) => {
+        event.stopPropagation();
+
+        settings.settingsOpen =
+          !settings.settingsOpen;
+
+        applyHudState(box);
+        saveSettings();
+
+        setTimeout(
+          () =>
+            reapplyPosition(
+              box,
+              true
+            ),
+          0
+        );
+      }
+    );
+
+    debugInput?.addEventListener(
+      "change",
+      () => {
+        settings.showDebug =
+          debugInput.checked;
+
+        saveSettings();
+        updateHud();
+      }
+    );
+
+    opacityInput?.addEventListener(
+      "input",
+      () => {
+        settings.opacity =
+          clampInt(
+            opacityInput.value,
+            5,
+            100,
+            DEFAULT_OPACITY
+          );
+
+        if (opacityValue) {
+          opacityValue.textContent =
+            `${settings.opacity}%`;
+        }
+
+        applyHudState(box);
+        saveSettings();
+      }
+    );
+normalInput?.addEventListener(
+      "change",
+      () => {
+        settings.normalListCount =
+          clampInt(
+            normalInput.value,
+            MIN_COUNT,
+            MAX_COUNT,
+            DEFAULT_NORMAL_COUNT
+          );
+
+        normalInput.value =
+          settings.normalListCount;
+
+        saveSettings();
+        updateHud();
+      }
+    );
+
+    lunarInput?.addEventListener(
+      "change",
+      () => {
+        settings.lunarListCount =
+          clampInt(
+            lunarInput.value,
+            MIN_COUNT,
+            MAX_COUNT,
+            DEFAULT_LUNAR_COUNT
+          );
+
+        lunarInput.value =
+          settings.lunarListCount;
+
+        saveSettings();
+        updateHud();
+      }
+    );
   }
 
   function weatherClass(id) {
     return id === "Rain"
       ? "mg-nw-rain"
-      : id === "Frost" || id === "Snow"
+      : id === "Frost" ||
+          id === "Snow"
         ? "mg-nw-snow"
         : id === "Thunderstorm"
           ? "mg-nw-thunderstorm"
@@ -1398,58 +2233,111 @@
     return event
       ? {
           id: event.weatherId,
-          name: FORECAST.displayName(event.weatherId),
-          startsAtMs: event.startsAtMs,
-          endsAtMs: event.endsAtMs,
+
+          name:
+            FORECAST.displayName(
+              event.weatherId
+            ),
+
+          startsAtMs:
+            event.startsAtMs,
+
+          endsAtMs:
+            event.endsAtMs,
         }
       : null;
   }
 
   function getNormalEvents() {
-    return FORECAST.nextEventList(
-      Date.now(),
-      settings.normalListCount
-    )
+    return FORECAST
+      .nextEventList(
+        gameNow(),
+        settings.normalListCount
+      )
       .map(normalizeEvent)
       .filter(Boolean);
   }
 
   function getLunarEvents() {
-    return FORECAST.nextLunarEventList(
-      Date.now(),
-      settings.lunarListCount
-    )
+    return FORECAST
+      .nextLunarEventList(
+        gameNow(),
+        settings.lunarListCount
+      )
       .map(normalizeEvent)
       .filter(Boolean);
   }
 
-  function renderRows(events, emptyText) {
+  function renderRows(
+    events,
+    emptyText
+  ) {
     if (!events.length) {
-      return `<div class="mg-nw-empty">${escapeHtml(emptyText)}</div>`;
+      return `
+        <div class="mg-nw-empty">
+          ${escapeHtml(emptyText)}
+        </div>
+      `;
     }
 
-    const now = Date.now();
-    let previousDate = dateKey(events[0].startsAtMs);
+    const now = gameNow();
+
+    let previousDate =
+      dateKey(
+        events[0].startsAtMs
+      );
 
     return events
       .map((event, index) => {
-        const currentDate = dateKey(event.startsAtMs);
+        const currentDate =
+          dateKey(
+            event.startsAtMs
+          );
 
         const divider =
-          index > 0 && currentDate !== previousDate
-            ? `<div class="mg-nw-date-divider">${escapeHtml(
-                formatDateDivider(event.startsAtMs, now)
-              )}</div>`
+          index > 0 &&
+          currentDate !== previousDate
+            ? `
+              <div class="mg-nw-date-divider">
+                ${escapeHtml(
+                  formatDateDivider(
+                    event.startsAtMs,
+                    now
+                  )
+                )}
+              </div>
+            `
             : "";
 
-        previousDate = currentDate;
+        previousDate =
+          currentDate;
 
-        return `${divider}<div class="mg-nw-upcoming-row">
-<span class="mg-nw-index">#${index + 1}</span>
-<span class="mg-nw-time">${formatTime(event.startsAtMs)}</span>
-<span class="mg-nw-name ${weatherClass(event.id)}">${escapeHtml(event.name)}</span>
-<span class="mg-nw-in">${formatRemaining(event.startsAtMs - now)}</span>
-</div>`;
+        return `
+          ${divider}
+
+          <div class="mg-nw-upcoming-row">
+            <span class="mg-nw-index">
+              #${index + 1}
+            </span>
+
+            <span class="mg-nw-time">
+              ${formatTime(
+                event.startsAtMs
+              )}
+            </span>
+
+            <span class="mg-nw-name ${weatherClass(event.id)}">
+              ${escapeHtml(event.name)}
+            </span>
+
+            <span class="mg-nw-in">
+              ${formatRemaining(
+                event.startsAtMs -
+                  now
+              )}
+            </span>
+          </div>
+        `;
       })
       .join("");
   }
@@ -1460,113 +2348,223 @@
 
     applyHudState(box);
 
-    const normalEvents = getNormalEvents();
-    const lunarEvents = getLunarEvents();
+    const now = gameNow();
 
-    const nextWeather = normalEvents[0];
-    const nextLunar = lunarEvents[0];
+    const normalEvents =
+      getNormalEvents();
 
-    const current = $("mg-nw-current");
+    const lunarEvents =
+      getLunarEvents();
 
-    if (current) {
-      if (gameWeatherId === undefined) {
-        current.textContent = "읽는 중...";
+    const nextWeather =
+      normalEvents[0];
+
+    const nextLunar =
+      lunarEvents[0];
+
+    const currentElement =
+      $("mg-nw-current");
+
+    if (currentElement) {
+      if (
+        gameWeatherId === undefined
+      ) {
+        currentElement.textContent =
+          "읽는 중...";
       } else {
-        const name = FORECAST.displayName(gameWeatherId);
-        const remaining = currentRemainingMs();
+        const name =
+          FORECAST.displayName(
+            gameWeatherId
+          );
+
+        const remaining =
+          currentRemainingMs();
 
         const remainingHtml =
           remaining === null
             ? ""
-            : ` <span class="mg-nw-in">in ${formatRemaining(
-                remaining
-              )}</span>`;
+            : `
+<span class="mg-nw-summary-time">
+                ${formatRemaining(
+                  remaining
+                )}
+              </span>
+            `;
 
-        current.innerHTML =
+        currentElement.innerHTML =
           gameWeatherId === null
-            ? `<span>${escapeHtml(name)}</span>${remainingHtml}`
-            : `<span class="${weatherClass(gameWeatherId)}">${escapeHtml(
-                name
-              )}</span>${remainingHtml}`;
+            ? `
+              <span>
+                ${escapeHtml(name)}
+              </span>
+              ${remainingHtml}
+            `
+            : `
+              <span class="${weatherClass(gameWeatherId)}">
+                ${escapeHtml(name)}
+              </span>
+              ${remainingHtml}
+            `;
       }
     }
 
-    const nextWeatherElement = $("mg-nw-next-weather");
+    const nextWeatherElement =
+      $("mg-nw-next-weather");
 
     if (nextWeatherElement) {
-      nextWeatherElement.innerHTML = nextWeather
-        ? `<span class="${weatherClass(nextWeather.id)}">${escapeHtml(
-            nextWeather.name
-          )}</span> <span class="mg-nw-in">in ${formatRemaining(
-            nextWeather.startsAtMs - Date.now()
-          )}</span>`
-        : "예보 없음";
+      nextWeatherElement.innerHTML =
+        nextWeather
+          ? `
+            <span class="${weatherClass(nextWeather.id)}">
+              ${escapeHtml(nextWeather.name)}
+            </span>
+<span class="mg-nw-summary-time">
+              ${formatRemaining(
+                nextWeather.startsAtMs -
+                  now
+              )}
+            </span>
+          `
+          : "예보 없음";
     }
 
-    const nextLunarElement = $("mg-nw-next-lunar");
+    const nextLunarElement =
+      $("mg-nw-next-lunar");
 
     if (nextLunarElement) {
-      nextLunarElement.innerHTML = nextLunar
-        ? `<span class="${weatherClass(nextLunar.id)}">${escapeHtml(
-            nextLunar.name
-          )}</span> <span class="mg-nw-in">in ${formatRemaining(
-            nextLunar.startsAtMs - Date.now()
-          )}</span>`
-        : "희귀 날씨 예보 없음";
+      nextLunarElement.innerHTML =
+        nextLunar
+          ? `
+            <span class="${weatherClass(nextLunar.id)}">
+              ${escapeHtml(nextLunar.name)}
+            </span>
+<span class="mg-nw-summary-time">
+              ${formatRemaining(
+                nextLunar.startsAtMs -
+                  now
+              )}
+            </span>
+          `
+          : "희귀 날씨 예보 없음";
     }
 
-    const weatherList = $("mg-nw-weather-list");
-    const lunarList = $("mg-nw-lunar-list");
+    const weatherList =
+      $("mg-nw-weather-list");
+
+    const lunarList =
+      $("mg-nw-lunar-list");
 
     if (weatherList) {
-      weatherList.innerHTML = renderRows(normalEvents, "예보 없음");
+      weatherList.innerHTML =
+        renderRows(
+          normalEvents,
+          "예보 없음"
+        );
     }
 
     if (lunarList) {
-      lunarList.innerHTML = renderRows(
-        lunarEvents,
-        "희귀 날씨 예보 없음"
-      );
+      lunarList.innerHTML =
+        renderRows(
+          lunarEvents,
+          "희귀 날씨 예보 없음"
+        );
     }
 
-    const status = weatherStatus();
-    const statusElement = $("mg-nw-debug-status");
+    const status =
+      weatherStatus();
+
+    const statusElement =
+      $("mg-nw-debug-status");
 
     if (statusElement) {
-      statusElement.textContent = status.state;
+      statusElement.textContent =
+        status.state;
+
       statusElement.className =
         "mg-nw-debug-value " +
-        (status.state === "LIVE"
-          ? "mg-nw-debug-live"
-          : status.state === "STALE"
-            ? "mg-nw-debug-stale"
-            : "mg-nw-debug-waiting");
+        (
+          status.state === "LIVE"
+            ? "mg-nw-debug-live"
+            : status.state === "STALE"
+              ? "mg-nw-debug-stale"
+              : "mg-nw-debug-waiting"
+        );
     }
 
-    const ageElement = $("mg-nw-debug-age");
-    const currentSource = $("mg-nw-debug-current-source");
-    const forecastSource = $("mg-nw-debug-forecast-source");
+    const ageElement =
+      $("mg-nw-debug-age");
 
-    if (ageElement) ageElement.textContent = formatAge(status.ageMs);
-    if (currentSource) currentSource.textContent = gameWeatherSource;
-    if (forecastSource) forecastSource.textContent = FORECAST.getSource();
+    const currentSource =
+      $("mg-nw-debug-current-source");
+
+    const forecastSource =
+      $("mg-nw-debug-forecast-source");
+
+    const timeSource =
+      $("mg-nw-debug-time-source");
+
+    if (ageElement) {
+      ageElement.textContent =
+        formatAge(status.ageMs);
+    }
+
+    if (currentSource) {
+      currentSource.textContent =
+        gameWeatherSource;
+    }
+
+    if (forecastSource) {
+      forecastSource.textContent =
+        FORECAST.getSource();
+    }
+
+    if (timeSource) {
+      timeSource.textContent =
+        serverTimeMs
+          ? "게임 서버"
+          : "기기 시간";
+    }
   }
 
   function boot() {
     createHud();
     updateHud();
 
-    if (updateTimer) clearInterval(updateTimer);
-    updateTimer = setInterval(updateHud, 1000);
+    if (updateTimer) {
+      clearInterval(updateTimer);
+    }
 
-    window.addEventListener("resize", () => {
-      const box = $(HUD_ID);
-      if (box) reapplyPosition(box, true);
-    });
+    updateTimer =
+      setInterval(
+        updateHud,
+        1000
+      );
+
+    window.addEventListener(
+      "resize",
+      () => {
+        const box =
+          $(HUD_ID);
+
+        if (box) {
+          reapplyPosition(
+            box,
+            true
+          );
+        }
+      }
+    );
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot, { once: true });
+  if (
+    document.readyState ===
+    "loading"
+  ) {
+    document.addEventListener(
+      "DOMContentLoaded",
+      boot,
+      { once: true }
+    );
   } else {
     boot();
   }
