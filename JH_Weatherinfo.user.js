@@ -1097,7 +1097,7 @@
         box.id = HUD_ID;
         box.innerHTML = `
 <div class="mg-nw-head" id="mg-nw-drag-handle" title="드래그해서 HUD 위치 이동">
-  <div class="mg-nw-title">MG Weather <span class="mg-nw-version">v.2.1 beta</span></div>
+  <div class="mg-nw-title">MG Weather <span class="mg-nw-version">v.2.2</span></div>
   <div class="mg-nw-buttons">
     <button id="mg-nw-settings-btn" type="button" title="설정" aria-label="설정">⚙</button>
     <button id="mg-nw-toggle-btn" type="button" title="${collapseTitle()}" aria-label="${collapseTitle()}">${collapseIcon()}</button>
